@@ -89,6 +89,11 @@ class MainActivity : ComponentActivity() {
             ).also { it.connect() }
         }
 
+        // Switch state is push-driven; refresh limits on demand when opening Energy.
+        LaunchedEffect(tab) {
+            if (tab == 1) runCatching { device?.readConfig() }
+        }
+
         Column(
             Modifier.fillMaxSize().padding(20.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)

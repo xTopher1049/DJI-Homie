@@ -17,13 +17,6 @@ import com.djipower.companion.protocol.PowerState
 import com.djipower.companion.protocol.Report
 import java.util.UUID
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 
 /**
@@ -54,8 +47,7 @@ class DjiPowerDevice(
     private val pending = HashMap<Int, CompletableDeferred<Duml.Packet>>()
     private val rawConfig = HashMap<Int, ByteArray>()
     private val setRules = 0x0E to Duml.hexToBytes("0c001e00efffff3f")
-    private val deviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private var pollJob: Job? = null
+    private var switchList: List<PortSwitch> = emptyList()
     @Volatile var authenticated = false; private set
 
     private fun nextSeq(): Int { sequence = (sequence + 1) and 0xFFFF; return sequence }
@@ -68,7 +60,6 @@ class DjiPowerDevice(
 
     fun disconnect() {
         authenticated = false
-        pollJob?.cancel()
         try { gatt?.disconnect(); gatt?.close() } catch (_: Exception) {}
         gatt = null
     }
@@ -80,7 +71,6 @@ class DjiPowerDevice(
                 g.discoverServices()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 authenticated = false
-                pollJob?.cancel()
                 onEvent("Disconnected")
             }
         }
@@ -128,7 +118,20 @@ class DjiPowerDevice(
             val waiter = pending.remove(packet.sequence)
             if (waiter != null) { waiter.complete(packet); continue }
             if (packet.commandId == Duml.REPORT_COMMAND) {
-                try { onState(Report.parseReport(payload)) } catch (_: Exception) {}
+                try {
+                    val st = Report.parseReport(payload)
+                    onState(st)
+                    if (switchList.isNotEmpty() && st.ports.isNotEmpty()) {
+                        val byId = st.ports.associateBy { it.type to it.seq }
+                        val updated = switchList.map { sw ->
+                            byId[sw.type to sw.seq]?.let { sw.copy(on = it.on) } ?: sw
+                        }
+                        if (updated != switchList) {
+                            switchList = updated
+                            onSwitches(updated)
+                        }
+                    }
+                } catch (_: Exception) {}
             }
         }
     }
@@ -175,7 +178,6 @@ class DjiPowerDevice(
                     0x00 -> {
                         authenticated = true; onEvent("Authenticated")
                         runCatching { readConfig() }
-                        startPolling()
                         return@runBlocking
                     }
                     0x03 -> if (attempt == 0) return@repeat  // retry once with a fresh challenge
@@ -210,18 +212,6 @@ class DjiPowerDevice(
         return out.toByteArray()
     }
 
-    /** Re-read config every few seconds so manual (physical) changes show up. */
-    private fun startPolling() {
-        pollJob?.cancel()
-        pollJob = deviceScope.launch {
-            while (isActive && authenticated) {
-                delay(1000)
-                if (!authenticated) break
-                runCatching { readConfig() }
-            }
-        }
-    }
-
     // ---- Energy Management ---------------------------------------------------
 
     private fun writeU32(b: ByteArray, i: Int, v: Int) {
@@ -244,7 +234,10 @@ class DjiPowerDevice(
         keyed[Energy.ENERGY_STORAGE_KEY]?.let { rawConfig[Energy.ENERGY_STORAGE_KEY] = it }
         keyed[Energy.POWER_SWITCH_KEY]?.let { rawConfig[Energy.POWER_SWITCH_KEY] = it }
 
-        rawConfig[Energy.POWER_SWITCH_KEY]?.let { onSwitches(Energy.parsePortSwitches(it)) }
+        rawConfig[Energy.POWER_SWITCH_KEY]?.let {
+            switchList = Energy.parsePortSwitches(it)
+            onSwitches(switchList)
+        }
 
         val limits = rawConfig[Energy.CHARGE_LIMIT_KEY]?.let { Energy.parseChargeLimits(it) } ?: return
         val reserve = rawConfig[Energy.ENERGY_STORAGE_KEY]?.let { Energy.parseReserve(it) }
