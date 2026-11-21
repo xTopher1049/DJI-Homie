@@ -17,6 +17,13 @@ import com.djipower.companion.protocol.PowerState
 import com.djipower.companion.protocol.Report
 import java.util.UUID
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 
 /**
@@ -47,6 +54,8 @@ class DjiPowerDevice(
     private val pending = HashMap<Int, CompletableDeferred<Duml.Packet>>()
     private val rawConfig = HashMap<Int, ByteArray>()
     private val setRules = 0x0E to Duml.hexToBytes("0c001e00efffff3f")
+    private val deviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var pollJob: Job? = null
     @Volatile var authenticated = false; private set
 
     private fun nextSeq(): Int { sequence = (sequence + 1) and 0xFFFF; return sequence }
@@ -59,6 +68,7 @@ class DjiPowerDevice(
 
     fun disconnect() {
         authenticated = false
+        pollJob?.cancel()
         try { gatt?.disconnect(); gatt?.close() } catch (_: Exception) {}
         gatt = null
     }
@@ -70,6 +80,7 @@ class DjiPowerDevice(
                 g.discoverServices()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 authenticated = false
+                pollJob?.cancel()
                 onEvent("Disconnected")
             }
         }
@@ -164,6 +175,7 @@ class DjiPowerDevice(
                     0x00 -> {
                         authenticated = true; onEvent("Authenticated")
                         runCatching { readConfig() }
+                        startPolling()
                         return@runBlocking
                     }
                     0x03 -> if (attempt == 0) return@repeat  // retry once with a fresh challenge
@@ -196,6 +208,18 @@ class DjiPowerDevice(
             value.forEach { out.add(it) }
         }
         return out.toByteArray()
+    }
+
+    /** Re-read config every few seconds so manual (physical) changes show up. */
+    private fun startPolling() {
+        pollJob?.cancel()
+        pollJob = deviceScope.launch {
+            while (isActive && authenticated) {
+                delay(5000)
+                if (!authenticated) break
+                runCatching { readConfig() }
+            }
+        }
     }
 
     // ---- Energy Management ---------------------------------------------------

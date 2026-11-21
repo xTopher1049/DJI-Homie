@@ -73,6 +73,7 @@ class MainActivity : ComponentActivity() {
         var energy by remember { mutableStateOf<EnergyConfig?>(null) }
         var tab by remember { mutableStateOf(0) }
         var switches by remember { mutableStateOf<List<PortSwitch>>(emptyList()) }
+        var confirmForget by remember { mutableStateOf(false) }
 
         LaunchedEffect(Unit) {
             val mac = creds.mac ?: return@LaunchedEffect
@@ -95,7 +96,7 @@ class MainActivity : ComponentActivity() {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(creds.stationName ?: "DJI Power 1000",
                     style = MaterialTheme.typography.headlineSmall)
-                TextButton(onClick = onSignOut) { Text("Sign out") }
+                TextButton(onClick = { confirmForget = true }) { Text("Forget station") }
             }
             Text("Status: $status")
 
@@ -143,6 +144,23 @@ class MainActivity : ComponentActivity() {
             } else {
                 EnergyPanel(energy, scope) { status = it }
             }
+        }
+
+        if (confirmForget) {
+            AlertDialog(
+                onDismissRequest = { confirmForget = false },
+                title = { Text("Forget this station?") },
+                text = {
+                    Text("This removes the saved pairing key from this phone and disconnects. " +
+                        "To reconnect later you'll sign in to DJI once more to fetch the key again.")
+                },
+                confirmButton = {
+                    TextButton(onClick = { confirmForget = false; onSignOut() }) { Text("Forget") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmForget = false }) { Text("Cancel") }
+                },
+            )
         }
     }
 
