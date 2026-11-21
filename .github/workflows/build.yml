@@ -18,13 +18,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # ubuntu-latest ships the Android SDK with licenses pre-accepted;
+      # Gradle/AGP find it via ANDROID_HOME and auto-fetch missing components.
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -40,11 +40,10 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dji-power-companion-debug
+          name: dji-homie-debug
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
-      # On a GitHub Release, also attach the APK to it.
       - name: Attach APK to release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
