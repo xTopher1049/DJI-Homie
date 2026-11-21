@@ -10,23 +10,30 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.BatteryChargingFull
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Power
+import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.djipower.companion.ble.DeviceScanner
 import com.djipower.companion.ble.DjiPowerDevice
 import com.djipower.companion.data.CredStore
-import androidx.compose.ui.Alignment
 import com.djipower.companion.protocol.EnergyConfig
 import com.djipower.companion.protocol.PortSwitch
 import com.djipower.companion.protocol.PowerState
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
-/**
- * Routes first-run onboarding -> dashboard. Credentials live encrypted on-device
- * (CredStore); the DJI account is used only during onboarding.
- */
+/** Routes first-run onboarding -> dashboard. */
 class MainActivity : ComponentActivity() {
 
     private var device: DjiPowerDevice? = null
@@ -42,16 +49,15 @@ class MainActivity : ComponentActivity() {
         val scanner = DeviceScanner(this)
         setContent {
             val dark = isSystemInDarkTheme()
-            MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background,
-                ) {
+            MaterialTheme(colorScheme = if (dark) DjiDarkScheme else DjiLightScheme) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     var onboarded by remember { mutableStateOf(creds.isOnboarded) }
                     if (!onboarded) {
                         OnboardingScreen(creds, scanner, onDone = { onboarded = true })
                     } else {
-                        Dashboard(creds, onSignOut = { creds.clear(); device?.disconnect(); onboarded = false })
+                        Dashboard(creds, onSignOut = {
+                            creds.clear(); device?.disconnect(); onboarded = false
+                        })
                     }
                 }
             }
@@ -88,87 +94,33 @@ class MainActivity : ComponentActivity() {
                 onSwitches = { sw -> runOnUiThread { switches = sw } },
             ).also { it.connect() }
         }
-
-        // Switch state is push-driven; refresh limits on demand when opening Energy.
-        LaunchedEffect(tab) {
-            if (tab == 1) runCatching { device?.readConfig() }
-        }
+        LaunchedEffect(tab) { if (tab == 1) runCatching { device?.readConfig() } }
 
         Column(
-            Modifier.fillMaxSize().padding(20.dp).verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(creds.stationName ?: "DJI Power 1000",
-                    style = MaterialTheme.typography.headlineSmall)
-                TextButton(onClick = { confirmForget = true }) { Text("Forget station") }
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column {
+                    Text(creds.stationName ?: "DJI Power 1000",
+                        style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text(status, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                TextButton(onClick = { confirmForget = true }) { Text("Forget") }
             }
-            Text("Status: $status")
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = tab == 0, onClick = { tab = 0 }, label = { Text("Status") })
-                FilterChip(selected = tab == 1, onClick = { tab = 1 }, label = { Text("Energy") })
+                FilterChip(tab == 0, { tab = 0 }, { Text("Status") })
+                FilterChip(tab == 1, { tab = 1 }, { Text("Energy") })
             }
-            HorizontalDivider()
 
-            if (tab == 0) {
-                Text("Live readings from your station, updated over Bluetooth.",
-                    style = MaterialTheme.typography.bodySmall)
-                state?.let { s ->
-                    s.batteryPercent?.let { Text("Battery: ${"%.1f".format(it)} %",
-                        style = MaterialTheme.typography.titleLarge) }
-                    s.runtimeMin?.let { Text("Remaining: ${it / 60} h ${it % 60} min") }
-                    Text("Total output: ${s.outputW ?: 0} W     Total input: ${s.inputW ?: 0} W")
-                    if (s.ports.isNotEmpty()) {
-                        HorizontalDivider()
-                        Text("Ports", style = MaterialTheme.typography.titleMedium)
-                        Text("Live power per individual port.",
-                            style = MaterialTheme.typography.bodySmall)
-                        s.ports.forEach { pp ->
-                            val detail = buildString {
-                                if (pp.outputW > 0) append("${pp.outputW} W out")
-                                if (pp.inputW > 0) {
-                                    if (isNotEmpty()) append("    ·    ")
-                                    append("${pp.inputW} W in")
-                                }
-                                if (isEmpty()) append("idle")
-                            }
-                            Row(Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(pp.label)
-                                Text(detail)
-                            }
-                        }
-                    }
-                    s.temperatureC?.let { Text("Battery temp: ${"%.1f".format(it)} °C") }
-                    s.charging?.let { Text(if (it) "Charging" else "Discharging") }
-                    HorizontalDivider()
-                    Text("Outputs", style = MaterialTheme.typography.titleMedium)
-                    Text("Turn a station output on or off. Each toggle shows the output's actual state.",
-                        style = MaterialTheme.typography.bodySmall)
-                    if (switches.isEmpty()) {
-                        Text("No controllable outputs reported yet.",
-                            style = MaterialTheme.typography.bodySmall)
-                    }
-                    switches.forEach { sw ->
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(sw.label)
-                            Switch(checked = sw.on, onCheckedChange = { v ->
-                                scope.launch {
-                                    runCatching { device?.setPortSwitch(sw.type, sw.seq, v) }
-                                        .onFailure { status = "switch failed: ${it.message}" }
-                                }
-                            })
-                        }
-                    }
-                } ?: Text("Waiting for first telemetry…")
-            } else {
-                EnergyPanel(energy, scope) { status = it }
-            }
+            if (tab == 0) StatusTab(state, switches, scope) { status = it }
+            else EnergyPanel(energy, scope) { status = it }
         }
 
         if (confirmForget) {
@@ -176,8 +128,8 @@ class MainActivity : ComponentActivity() {
                 onDismissRequest = { confirmForget = false },
                 title = { Text("Forget this station?") },
                 text = {
-                    Text("This removes the saved pairing key from this phone and disconnects. " +
-                        "To reconnect later you'll sign in to DJI once more to fetch the key again.")
+                    Text("Removes the saved pairing key from this phone and disconnects. " +
+                        "To reconnect you'll sign in to DJI once more to fetch it again.")
                 },
                 confirmButton = {
                     TextButton(onClick = { confirmForget = false; onSignOut() }) { Text("Forget") }
@@ -190,66 +142,124 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun EnergyPanel(
-        energy: EnergyConfig?,
-        scope: kotlinx.coroutines.CoroutineScope,
-        onError: (String) -> Unit,
+    private fun StatusTab(
+        state: PowerState?, switches: List<PortSwitch>,
+        scope: CoroutineScope, onError: (String) -> Unit,
     ) {
-        val cfg = energy ?: run { Text("Loading energy settings…"); return }
+        val s = state ?: run {
+            Card(Modifier.fillMaxWidth()) {
+                Text("Waiting for first telemetry…", Modifier.padding(20.dp))
+            }
+            return
+        }
+
+        BatteryCard(s)
+
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            StatCard(Modifier.weight(1f), "Output", "${s.outputW ?: 0} W",
+                Icons.Filled.ArrowUpward, MaterialTheme.colorScheme.secondary)
+            StatCard(Modifier.weight(1f), "Input", "${s.inputW ?: 0} W",
+                Icons.Filled.ArrowDownward, MaterialTheme.colorScheme.tertiary)
+        }
+
+        val switchKeys = switches.map { it.type to it.seq }.toSet()
+        val wattsByKey = s.ports.associateBy { it.type to it.seq }
+
+        Text("Outputs", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        if (switches.isEmpty() && s.ports.isEmpty()) {
+            Text("No outputs reported yet.", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+
+        switches.forEach { sw ->
+            val pp = wattsByKey[sw.type to sw.seq]
+            PortCard(sw.label, portIcon(sw.type), portDetail(pp?.outputW ?: 0, pp?.inputW ?: 0, sw.on),
+                checked = sw.on, onToggle = { v ->
+                    scope.launch {
+                        runCatching { device?.setPortSwitch(sw.type, sw.seq, v) }
+                            .onFailure { onError("switch failed: ${it.message}") }
+                    }
+                })
+        }
+        // Telemetry-only ports (power but not switchable)
+        s.ports.filter { (it.type to it.seq) !in switchKeys }.forEach { pp ->
+            PortCard(pp.label, portIcon(pp.type), portDetail(pp.outputW, pp.inputW, pp.on),
+                checked = null, onToggle = null)
+        }
+    }
+
+    @Composable
+    private fun EnergyPanel(energy: EnergyConfig?, scope: CoroutineScope, onError: (String) -> Unit) {
+        val cfg = energy ?: run {
+            Card(Modifier.fillMaxWidth()) { Text("Loading energy settings…", Modifier.padding(20.dp)) }
+            return
+        }
         val cl = cfg.limits
         var dsch by remember(cfg) { mutableStateOf(cl.discharge.toFloat()) }
         var rch by remember(cfg) { mutableStateOf(cl.recharge.toFloat()) }
 
-        Text("Charge & discharge limits", style = MaterialTheme.typography.titleMedium)
-        Text("The station stops discharging below the discharge limit and stops charging at " +
-            "the recharge limit. A narrower window (e.g. 20–80%) noticeably extends battery life.",
-            style = MaterialTheme.typography.bodySmall)
-        Text("Discharge: ${dsch.toInt()}%      Recharge: ${rch.toInt()}%")
-        RangeSlider(
-            value = dsch..rch,
-            onValueChange = { r -> dsch = r.start; rch = r.endInclusive },
-            valueRange = cl.dischargeMin.toFloat()..cl.rechargeMax.toFloat(),
-            onValueChangeFinished = {
-                scope.launch {
-                    runCatching { device?.setChargeLimits(dsch.toInt(), rch.toInt()) }
-                        .onFailure { onError("limit set failed: ${it.message}") }
-                }
-            },
-        )
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Charge & discharge limits", style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold)
+                Text("The station stops discharging below the discharge limit and stops charging " +
+                    "at the recharge limit. A narrower window (e.g. 20–80%) extends battery life.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Discharge ${dsch.toInt()}%   →   Recharge ${rch.toInt()}%",
+                    style = MaterialTheme.typography.titleMedium)
+                RangeSlider(
+                    value = dsch..rch,
+                    onValueChange = { r -> dsch = r.start; rch = r.endInclusive },
+                    valueRange = cl.dischargeMin.toFloat()..cl.rechargeMax.toFloat(),
+                    onValueChangeFinished = {
+                        scope.launch {
+                            runCatching { device?.setChargeLimits(dsch.toInt(), rch.toInt()) }
+                                .onFailure { onError("limit set failed: ${it.message}") }
+                        }
+                    },
+                )
+            }
+        }
 
         cfg.reserve?.takeIf { it.available }?.let { r ->
             var on by remember(cfg) { mutableStateOf(r.enabled) }
             var pct by remember(cfg) { mutableStateOf(r.percent.toFloat()) }
-            HorizontalDivider()
-            Text("When several charging sources are connected, only solar charges above this " +
-                "level; below it, all sources charge. Useful for solar + grid/car setups.",
-                style = MaterialTheme.typography.bodySmall)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically) {
-                Text("Custom backup reserve", style = MaterialTheme.typography.titleMedium)
-                Switch(checked = on, onCheckedChange = { v ->
-                    on = v
-                    scope.launch {
-                        runCatching { device?.setReserve(enabled = v) }
-                            .onFailure { onError("reserve toggle failed: ${it.message}") }
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text("Custom backup reserve", style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold)
+                        Switch(checked = on, onCheckedChange = { v ->
+                            on = v
+                            scope.launch {
+                                runCatching { device?.setReserve(enabled = v) }
+                                    .onFailure { onError("reserve toggle failed: ${it.message}") }
+                            }
+                        })
                     }
-                })
-            }
-            if (on) {
-                val lo = (cl.discharge + 5).coerceAtMost(cl.recharge)
-                val hi = cl.recharge
-                Text("Reserve level: ${pct.toInt()}%")
-                Slider(
-                    value = pct.coerceIn(lo.toFloat(), hi.toFloat()),
-                    onValueChange = { pct = it },
-                    valueRange = lo.toFloat()..hi.toFloat(),
-                    onValueChangeFinished = {
-                        scope.launch {
-                            runCatching { device?.setReserve(percent = pct.toInt(), min = lo, max = hi) }
-                                .onFailure { onError("reserve level failed: ${it.message}") }
-                        }
-                    },
-                )
+                    Text("When several charging sources are connected, only solar charges above " +
+                        "this level; below it, all sources charge.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (on) {
+                        val lo = (cl.discharge + 5).coerceAtMost(cl.recharge)
+                        val hi = cl.recharge
+                        Text("Reserve level ${pct.toInt()}%", style = MaterialTheme.typography.titleMedium)
+                        Slider(
+                            value = pct.coerceIn(lo.toFloat(), hi.toFloat()),
+                            onValueChange = { pct = it },
+                            valueRange = lo.toFloat()..hi.toFloat(),
+                            onValueChangeFinished = {
+                                scope.launch {
+                                    runCatching { device?.setReserve(percent = pct.toInt(), min = lo, max = hi) }
+                                        .onFailure { onError("reserve level failed: ${it.message}") }
+                                }
+                            },
+                        )
+                    }
+                }
             }
         }
     }
@@ -257,5 +267,100 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         device?.disconnect()
+    }
+}
+
+// ---- Reusable pieces --------------------------------------------------------
+
+private fun portIcon(type: Int): ImageVector = when (type) {
+    2 -> Icons.Filled.Power
+    3, 4 -> Icons.Filled.Usb
+    else -> Icons.Filled.Bolt
+}
+
+private fun portDetail(outputW: Int, inputW: Int, on: Boolean): String = buildString {
+    if (outputW > 0) append("$outputW W out")
+    if (inputW > 0) { if (isNotEmpty()) append("   ·   "); append("$inputW W in") }
+    if (isEmpty()) append(if (on) "on · idle" else "off")
+}
+
+@Composable
+private fun BatteryCard(s: PowerState) {
+    val pct = (s.batteryPercent ?: 0.0).toFloat()
+    val barColor = when {
+        pct > 50 -> MaterialTheme.colorScheme.primary
+        pct >= 20 -> MaterialTheme.colorScheme.secondary
+        else -> MaterialTheme.colorScheme.error
+    }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Filled.BatteryChargingFull, null, tint = barColor)
+                    Text("${"%.0f".format(pct)}%", style = MaterialTheme.typography.displaySmall,
+                        fontWeight = FontWeight.Bold)
+                }
+                s.charging?.let {
+                    AssistChip(onClick = {}, label = { Text(if (it) "Charging" else "Discharging") })
+                }
+            }
+            LinearProgressIndicator(
+                progress = { (pct / 100f).coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth().height(10.dp),
+                color = barColor,
+            )
+            val sub = buildString {
+                s.runtimeMin?.let { append("≈ ${it / 60} h ${it % 60} min remaining") }
+                s.temperatureC?.let {
+                    if (isNotEmpty()) append("    ·    ")
+                    append("${"%.1f".format(it)} °C")
+                }
+            }
+            if (sub.isNotEmpty()) {
+                Text(sub, style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatCard(modifier: Modifier, title: String, value: String, icon: ImageVector, tint: androidx.compose.ui.graphics.Color) {
+    Card(modifier) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Icon(icon, null, tint = tint, modifier = Modifier.size(18.dp))
+                Text(title, style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text(value, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun PortCard(label: String, icon: ImageVector, detail: String, checked: Boolean?, onToggle: ((Boolean) -> Unit)?) {
+    Card(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
+                Column {
+                    Text(label, style = MaterialTheme.typography.titleMedium)
+                    Text(detail, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            if (checked != null && onToggle != null) {
+                Switch(checked = checked, onCheckedChange = onToggle)
+            }
+        }
     }
 }
