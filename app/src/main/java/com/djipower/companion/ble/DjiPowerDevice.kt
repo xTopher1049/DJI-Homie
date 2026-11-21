@@ -12,6 +12,7 @@ import android.content.Context
 import com.djipower.companion.protocol.Duml
 import com.djipower.companion.protocol.Energy
 import com.djipower.companion.protocol.EnergyConfig
+import com.djipower.companion.protocol.PortSwitch
 import com.djipower.companion.protocol.PowerState
 import com.djipower.companion.protocol.Report
 import java.util.UUID
@@ -36,6 +37,7 @@ class DjiPowerDevice(
     private val onState: (PowerState) -> Unit = {},
     private val onEvent: (String) -> Unit = {},
     private val onConfig: (EnergyConfig) -> Unit = {},
+    private val onSwitches: (List<PortSwitch>) -> Unit = {},
 ) {
     private val pairKey = Duml.normalizePairKey(pairKeyHex)
     private val stream = Duml.Stream()
@@ -161,7 +163,7 @@ class DjiPowerDevice(
                 when (result.getOrNull(0)?.toInt() ?: -1) {
                     0x00 -> {
                         authenticated = true; onEvent("Authenticated")
-                        runCatching { readEnergyConfig() }
+                        runCatching { readConfig() }
                         return@runBlocking
                     }
                     0x03 -> if (attempt == 0) return@repeat  // retry once with a fresh challenge
@@ -206,16 +208,41 @@ class DjiPowerDevice(
         b[i] = (v and 0xFF).toByte(); b[i + 1] = ((v shr 8) and 0xFF).toByte()
     }
 
-    /** GET charge limits (0x05) + backup reserve (0x06), parse, store raw, publish. */
-    suspend fun readEnergyConfig() {
-        val resp = request(Duml.GET_COMMAND, byteArrayOf(0x00, 0x05, 0x10, 0x06, 0x10))
+    /** GET charge limits (0x05), reserve (0x06), power switches (0x0D); publish. */
+    suspend fun readConfig() {
+        val resp = request(
+            Duml.GET_COMMAND,
+            byteArrayOf(0x00, 0x05, 0x10, 0x06, 0x10, 0x0D, 0x10),
+        )
         val payload = decode(resp)
         val keyed = Energy.parseKeyedValues(payload)
         keyed[Energy.CHARGE_LIMIT_KEY]?.let { rawConfig[Energy.CHARGE_LIMIT_KEY] = it }
         keyed[Energy.ENERGY_STORAGE_KEY]?.let { rawConfig[Energy.ENERGY_STORAGE_KEY] = it }
+        keyed[Energy.POWER_SWITCH_KEY]?.let { rawConfig[Energy.POWER_SWITCH_KEY] = it }
+
+        rawConfig[Energy.POWER_SWITCH_KEY]?.let { onSwitches(Energy.parsePortSwitches(it)) }
+
         val limits = rawConfig[Energy.CHARGE_LIMIT_KEY]?.let { Energy.parseChargeLimits(it) } ?: return
         val reserve = rawConfig[Energy.ENERGY_STORAGE_KEY]?.let { Energy.parseReserve(it) }
         onConfig(EnergyConfig(limits, reserve))
+    }
+
+    /** Toggle one station output on/off, preserving its row body; then re-read. */
+    suspend fun setPortSwitch(type: Int, seq: Int, on: Boolean) {
+        val snapshot = rawConfig[Energy.POWER_SWITCH_KEY]
+            ?: throw IllegalStateException("switch state not loaded yet")
+        val row = Report.parseTlvs(snapshot).firstOrNull {
+            it.value.size >= 3 &&
+                (it.value[0].toInt() and 0xFF) == type &&
+                (it.value[1].toInt() and 0xFF) == seq
+        } ?: throw IllegalStateException("output not found on this station")
+        val body = row.value.copyOf()
+        body[2] = (if (on) 1 else 2).toByte()
+        val value = byteArrayOf(
+            0x0D, 0x00, (body.size and 0xFF).toByte(), ((body.size shr 8) and 0xFF).toByte(),
+        ) + body
+        request(Duml.SET_COMMAND, buildKeyedSet(listOf(Energy.POWER_SWITCH_KEY to value, setRules)))
+        readConfig()
     }
 
     /** Set discharge/recharge limits, preserving the record's other bytes. */
@@ -226,7 +253,7 @@ class DjiPowerDevice(
         writeU32(v, 8, recharge)
         writeU32(v, 20, discharge)
         request(Duml.SET_COMMAND, buildKeyedSet(listOf(Energy.CHARGE_LIMIT_KEY to v, setRules)))
-        readEnergyConfig()
+        readConfig()
     }
 
     /** Enable/disable the custom backup reserve and/or set its level. */
@@ -237,6 +264,6 @@ class DjiPowerDevice(
         if (enabled != null) v[1] = (if (enabled) 1 else 2).toByte()
         if (percent != null) writeU16(v, 2, percent.coerceIn(min, max))
         request(Duml.SET_COMMAND, buildKeyedSet(listOf(Energy.ENERGY_STORAGE_KEY to v, setRules)))
-        readEnergyConfig()
+        readConfig()
     }
 }

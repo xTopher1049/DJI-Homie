@@ -17,7 +17,9 @@ import androidx.compose.ui.unit.dp
 import com.djipower.companion.ble.DeviceScanner
 import com.djipower.companion.ble.DjiPowerDevice
 import com.djipower.companion.data.CredStore
+import androidx.compose.ui.Alignment
 import com.djipower.companion.protocol.EnergyConfig
+import com.djipower.companion.protocol.PortSwitch
 import com.djipower.companion.protocol.PowerState
 import kotlinx.coroutines.launch
 
@@ -70,6 +72,7 @@ class MainActivity : ComponentActivity() {
         var state by remember { mutableStateOf<PowerState?>(null) }
         var energy by remember { mutableStateOf<EnergyConfig?>(null) }
         var tab by remember { mutableStateOf(0) }
+        var switches by remember { mutableStateOf<List<PortSwitch>>(emptyList()) }
 
         LaunchedEffect(Unit) {
             val mac = creds.mac ?: return@LaunchedEffect
@@ -81,6 +84,7 @@ class MainActivity : ComponentActivity() {
                 onState = { s -> runOnUiThread { state = s } },
                 onEvent = { e -> runOnUiThread { status = e } },
                 onConfig = { c -> runOnUiThread { energy = c } },
+                onSwitches = { sw -> runOnUiThread { switches = sw } },
             ).also { it.connect() }
         }
 
@@ -102,6 +106,8 @@ class MainActivity : ComponentActivity() {
             HorizontalDivider()
 
             if (tab == 0) {
+                Text("Live readings from your station, updated over Bluetooth.",
+                    style = MaterialTheme.typography.bodySmall)
                 state?.let { s ->
                     s.batteryPercent?.let { Text("Battery: ${"%.1f".format(it)} %",
                         style = MaterialTheme.typography.titleLarge) }
@@ -111,13 +117,27 @@ class MainActivity : ComponentActivity() {
                     s.temperatureC?.let { Text("Battery temp: ${"%.1f".format(it)} °C") }
                     s.charging?.let { Text(if (it) "Charging" else "Discharging") }
                     HorizontalDivider()
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Button(onClick = { scope.launch {
-                            runCatching { device?.setAcOutput(true) }
-                                .onFailure { status = "AC on failed: ${it.message}" } } }) { Text("AC On") }
-                        OutlinedButton(onClick = { scope.launch {
-                            runCatching { device?.setAcOutput(false) }
-                                .onFailure { status = "AC off failed: ${it.message}" } } }) { Text("AC Off") }
+                    Text("Outputs", style = MaterialTheme.typography.titleMedium)
+                    Text("Turn a station output on or off. Each toggle shows the output's actual state.",
+                        style = MaterialTheme.typography.bodySmall)
+                    if (switches.isEmpty()) {
+                        Text("No controllable outputs reported yet.",
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                    switches.forEach { sw ->
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(sw.label)
+                            Switch(checked = sw.on, onCheckedChange = { v ->
+                                scope.launch {
+                                    runCatching { device?.setPortSwitch(sw.type, sw.seq, v) }
+                                        .onFailure { status = "switch failed: ${it.message}" }
+                                }
+                            })
+                        }
                     }
                 } ?: Text("Waiting for first telemetry…")
             } else {
@@ -137,8 +157,11 @@ class MainActivity : ComponentActivity() {
         var dsch by remember(cfg) { mutableStateOf(cl.discharge.toFloat()) }
         var rch by remember(cfg) { mutableStateOf(cl.recharge.toFloat()) }
 
-        Text("Discharge limit: ${dsch.toInt()}%      Recharge limit: ${rch.toInt()}%",
-            style = MaterialTheme.typography.titleMedium)
+        Text("Charge & discharge limits", style = MaterialTheme.typography.titleMedium)
+        Text("The station stops discharging below the discharge limit and stops charging at " +
+            "the recharge limit. A narrower window (e.g. 20–80%) noticeably extends battery life.",
+            style = MaterialTheme.typography.bodySmall)
+        Text("Discharge: ${dsch.toInt()}%      Recharge: ${rch.toInt()}%")
         RangeSlider(
             value = dsch..rch,
             onValueChange = { r -> dsch = r.start; rch = r.endInclusive },
@@ -155,7 +178,11 @@ class MainActivity : ComponentActivity() {
             var on by remember(cfg) { mutableStateOf(r.enabled) }
             var pct by remember(cfg) { mutableStateOf(r.percent.toFloat()) }
             HorizontalDivider()
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("When several charging sources are connected, only solar charges above this " +
+                "level; below it, all sources charge. Useful for solar + grid/car setups.",
+                style = MaterialTheme.typography.bodySmall)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically) {
                 Text("Custom backup reserve", style = MaterialTheme.typography.titleMedium)
                 Switch(checked = on, onCheckedChange = { v ->
                     on = v

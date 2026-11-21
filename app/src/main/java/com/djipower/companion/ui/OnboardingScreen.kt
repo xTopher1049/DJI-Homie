@@ -65,6 +65,11 @@ fun OnboardingScreen(credStore: CredStore, scanner: DeviceScanner, onDone: () ->
 
         when (step) {
             Step.CREDENTIALS -> {
+                Text("DJI Homie talks to your station directly over Bluetooth. It needs your DJI " +
+                    "login just once, to download the station's local pairing key. After that it " +
+                    "works fully offline and never touches your account again. Your password is " +
+                    "sent only to DJI and is never stored.",
+                    style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(email, { email = it }, label = { Text("DJI account email") },
                     singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(password, { password = it }, label = { Text("Password") },
@@ -85,7 +90,9 @@ fun OnboardingScreen(credStore: CredStore, scanner: DeviceScanner, onDone: () ->
             }
 
             Step.CAPTCHA -> {
-                Text("Type the characters shown (case-sensitive):")
+                Text("DJI requires a captcha to sign in. Type the characters from the image " +
+                    "below exactly — it is case-sensitive.",
+                    style = MaterialTheme.typography.bodySmall)
                 captchaBmp?.let {
                     Image(
                         bitmap = it,
@@ -120,6 +127,8 @@ fun OnboardingScreen(credStore: CredStore, scanner: DeviceScanner, onDone: () ->
             }
 
             Step.TWO_FACTOR -> {
+                Text("Your DJI account has two-step verification turned on, so DJI emailed you a " +
+                    "one-time code.", style = MaterialTheme.typography.bodySmall)
                 Text("Enter the verification code DJI emailed you:")
                 OutlinedTextField(emailCode, { emailCode = it }, label = { Text("Email code") },
                     singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -141,6 +150,13 @@ fun OnboardingScreen(credStore: CredStore, scanner: DeviceScanner, onDone: () ->
             Step.SELECT -> {
                 Text("Pair key retrieved. Now pick your station.",
                     style = MaterialTheme.typography.titleMedium)
+                Text("DJI Homie is scanning for your powered-on station nearby over Bluetooth. " +
+                    "Tap it when it appears, or type its MAC address.",
+                    style = MaterialTheme.typography.bodySmall)
+                LaunchedEffect(Unit) {
+                    scanResults = emptyList()
+                    scanner.start(12_000) { scanResults = it }
+                }
                 if (devices.size > 1) {
                     Text("Account devices:")
                     devices.forEach { d ->
@@ -156,8 +172,8 @@ fun OnboardingScreen(credStore: CredStore, scanner: DeviceScanner, onDone: () ->
                     Text("Nearby stations (Bluetooth):")
                     TextButton(onClick = {
                         scanResults = emptyList()
-                        scanner.start(10_000) { scanResults = it }
-                    }) { Text("Scan") }
+                        scanner.start(12_000) { scanResults = it }
+                    }) { Text("Rescan") }
                 }
                 scanResults.forEach { f ->
                     OutlinedButton(onClick = { mac = f.address }, modifier = Modifier.fillMaxWidth()) {
