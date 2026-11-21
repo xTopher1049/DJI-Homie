@@ -113,8 +113,28 @@ class MainActivity : ComponentActivity() {
                     s.batteryPercent?.let { Text("Battery: ${"%.1f".format(it)} %",
                         style = MaterialTheme.typography.titleLarge) }
                     s.runtimeMin?.let { Text("Remaining: ${it / 60} h ${it % 60} min") }
-                    Text("Output: ${s.outputW ?: 0} W     Input: ${s.inputW ?: 0} W")
-                    Text("AC out: ${s.acOutputW} W     DC out: ${s.dcOutputW} W")
+                    Text("Total output: ${s.outputW ?: 0} W     Total input: ${s.inputW ?: 0} W")
+                    if (s.ports.isNotEmpty()) {
+                        HorizontalDivider()
+                        Text("Ports", style = MaterialTheme.typography.titleMedium)
+                        Text("Live power per individual port.",
+                            style = MaterialTheme.typography.bodySmall)
+                        s.ports.forEach { pp ->
+                            val detail = buildString {
+                                if (pp.outputW > 0) append("${pp.outputW} W out")
+                                if (pp.inputW > 0) {
+                                    if (isNotEmpty()) append("    ·    ")
+                                    append("${pp.inputW} W in")
+                                }
+                                if (isEmpty()) append("idle")
+                            }
+                            Row(Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(pp.label)
+                                Text(detail)
+                            }
+                        }
+                    }
                     s.temperatureC?.let { Text("Battery temp: ${"%.1f".format(it)} °C") }
                     s.charging?.let { Text(if (it) "Charging" else "Discharging") }
                     HorizontalDivider()

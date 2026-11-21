@@ -18,6 +18,13 @@ data class PowerState(
     val dcOutputW: Int = 0,
     val chargeInputW: Int = 0,
     val charging: Boolean? = null,
+    val ports: List<PortPower> = emptyList(),
+)
+
+/** One active port from a telemetry report: identity + live watts. */
+data class PortPower(
+    val type: Int, val seq: Int, val label: String,
+    val outputW: Int, val inputW: Int, val on: Boolean,
 )
 
 object Report {
@@ -86,6 +93,7 @@ object Report {
         var inputW: Int? = null
         val groupOutput = HashMap<Int, Int>()
         val groupInput = HashMap<Int, Int>()
+        val ports = ArrayList<PortPower>()
 
         records(top, 0x3030).firstOrNull()?.let { power ->
             if (power.size >= 4) {
@@ -101,6 +109,16 @@ object Report {
                                 if (port.size < 7) continue
                                 val outW = le16(port, 3)
                                 val inW = le16(port, 5)
+                                val pType = port[1].toInt() and 0xFF
+                                val pSeq = port[0].toInt() and 0xFF
+                                ports.add(
+                                    PortPower(
+                                        type = pType, seq = pSeq,
+                                        label = Energy.switchLabel(pType, pSeq),
+                                        outputW = outW, inputW = inW,
+                                        on = (port[2].toInt() and 0xFF) == 1,
+                                    )
+                                )
                                 groupOutput[groupType] = (groupOutput[groupType] ?: 0) + outW
                                 groupInput[groupType] = (groupInput[groupType] ?: 0) + inW
                             }
@@ -120,6 +138,7 @@ object Report {
             dcOutputW = groupOutput[3] ?: 0,
             chargeInputW = groupInput[1] ?: 0,
             charging = charging,
+            ports = ports,
         )
     }
 }

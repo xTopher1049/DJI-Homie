@@ -215,7 +215,7 @@ class DjiPowerDevice(
         pollJob?.cancel()
         pollJob = deviceScope.launch {
             while (isActive && authenticated) {
-                delay(5000)
+                delay(1000)
                 if (!authenticated) break
                 runCatching { readConfig() }
             }
