@@ -1,7 +1,9 @@
 package com.djipower.companion.ble
 
 import android.annotation.SuppressLint
+import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothManager
@@ -45,7 +47,7 @@ class DjiPowerDevice(
     fun connect() {
         val mgr = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         val device = mgr.adapter.getRemoteDevice(address)
-        gatt = device.connectGatt(context, false, callback, BluetoothGatt.TRANSPORT_LE)
+        gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
     }
 
     fun disconnect() {
@@ -78,7 +80,7 @@ class DjiPowerDevice(
                 g.setCharacteristicNotification(n, true)
                 val cccd = n.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
                 cccd?.let {
-                    it.value = BluetoothGattCharacteristic.ENABLE_NOTIFICATION_VALUE
+                    it.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
                     g.writeDescriptor(it)
                 }
                 onEvent("GATT ready ($svc); authenticating")
@@ -160,7 +162,6 @@ class DjiPowerDevice(
         }
     }
 
-    private fun ByteArray.getOrNull(i: Int): Byte? = if (i < size) this[i] else null
 
     /** Toggle the AC main output. */
     suspend fun setAcOutput(enabled: Boolean) {
