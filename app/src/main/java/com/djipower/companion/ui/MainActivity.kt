@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import com.djipower.companion.ble.DeviceScanner
 import com.djipower.companion.ble.DjiPowerDevice
 import com.djipower.companion.data.CredStore
+import com.djipower.companion.protocol.DeviceInfo
 import com.djipower.companion.protocol.EnergyConfig
 import com.djipower.companion.protocol.PortSwitch
 import com.djipower.companion.protocol.PowerState
@@ -101,6 +102,7 @@ class MainActivity : ComponentActivity() {
         var rssi by remember { mutableStateOf<Int?>(null) }
         var showSettings by remember { mutableStateOf(false) }
         var showUpsConfig by remember { mutableStateOf(false) }
+        var deviceInfo by remember { mutableStateOf<DeviceInfo?>(null) }
 
         LaunchedEffect(Unit) {
             val mac = creds.mac ?: return@LaunchedEffect
@@ -114,6 +116,7 @@ class MainActivity : ComponentActivity() {
                 onConfig = { c -> runOnUiThread { energy = c } },
                 onSwitches = { sw -> runOnUiThread { switches = sw } },
                 onRssi = { r -> runOnUiThread { rssi = r } },
+                onDeviceInfo = { di -> runOnUiThread { deviceInfo = di } },
             ).also { it.connect() }
         }
         LaunchedEffect(tab) { if (tab == 1) runCatching { device?.readConfig() } }
@@ -125,6 +128,7 @@ class MainActivity : ComponentActivity() {
             SettingsScreen(
                 themeMode = themeMode,
                 onThemeChange = onThemeChange,
+                deviceInfo = deviceInfo,
                 onForget = { confirmForget = true },
                 onBack = { showSettings = false },
             )
@@ -337,6 +341,7 @@ class MainActivity : ComponentActivity() {
     private fun SettingsScreen(
         themeMode: String,
         onThemeChange: (String) -> Unit,
+        deviceInfo: DeviceInfo?,
         onForget: () -> Unit,
         onBack: () -> Unit,
     ) {
@@ -366,6 +371,30 @@ class MainActivity : ComponentActivity() {
                                 Text(label)
                             }
                         }
+                }
+            }
+
+            deviceInfo?.let { di ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Device", style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold)
+                        di.firmware?.let { InfoRow("Firmware", it) }
+                        di.dongleFirmware?.let { InfoRow("Dongle firmware", it) }
+                        di.cycleCount?.let { InfoRow("Battery cycles", "$it") }
+                        di.maintenanceCharging?.let {
+                            InfoRow("Maintenance charge", if (it) "Active" else "Normal")
+                        }
+                        di.cloudConnected?.let { InfoRow("DJI cloud", if (it) "Connected" else "Offline") }
+                        di.screenTimeoutS?.let { InfoRow("Screen timeout", fmtTimeout(it)) }
+                        di.deviceTimeoutS?.let { InfoRow("Device timeout", fmtTimeout(it)) }
+                        di.tempUnitFahrenheit?.let {
+                            InfoRow("Temperature unit", if (it) "°F" else "°C")
+                        }
+                        di.accessories.forEach { a ->
+                            InfoRow("Accessory", "type ${a.type}" + (a.firmware?.let { " · $it" } ?: ""))
+                        }
+                    }
                 }
             }
 
@@ -486,6 +515,20 @@ private fun PortCard(
             }
         }
     }
+}
+
+@Composable
+private fun InfoRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value)
+    }
+}
+
+private fun fmtTimeout(s: Int): String = when {
+    s == 0 -> "Never"
+    s % 3600 == 0 -> "${s / 3600} h"
+    else -> "${s / 60} min"
 }
 
 @Composable

@@ -13,6 +13,8 @@ import android.os.Handler
 import android.os.Looper
 import com.djipower.companion.protocol.Duml
 import com.djipower.companion.protocol.Energy
+import com.djipower.companion.protocol.DeviceInfo
+import com.djipower.companion.protocol.DeviceInfoParser
 import com.djipower.companion.protocol.EnergyConfig
 import com.djipower.companion.protocol.PortSwitch
 import com.djipower.companion.protocol.PowerState
@@ -41,6 +43,7 @@ class DjiPowerDevice(
     private val onConfig: (EnergyConfig) -> Unit = {},
     private val onSwitches: (List<PortSwitch>) -> Unit = {},
     private val onRssi: (Int) -> Unit = {},
+    private val onDeviceInfo: (DeviceInfo) -> Unit = {},
 ) {
     private val pairKey = Duml.normalizePairKey(pairKeyHex)
     private val stream = Duml.Stream()
@@ -149,6 +152,9 @@ class DjiPowerDevice(
                     }
                 } catch (_: Exception) {}
             }
+            if (packet.commandId == 0x62) {
+                try { applyConfig(payload) } catch (_: Exception) {}
+            }
         }
     }
 
@@ -239,13 +245,20 @@ class DjiPowerDevice(
         b[i] = (v and 0xFF).toByte(); b[i + 1] = ((v shr 8) and 0xFF).toByte()
     }
 
-    /** GET charge limits (0x05), reserve (0x06), power switches (0x0D); publish. */
+    /** GET base/network/accessories/limits/reserve/display/switches; publish all. */
     suspend fun readConfig() {
         val resp = request(
             Duml.GET_COMMAND,
-            byteArrayOf(0x00, 0x05, 0x10, 0x06, 0x10, 0x0C, 0x10, 0x0D, 0x10),
+            byteArrayOf(
+                0x00, 0x00, 0x10, 0x02, 0x10, 0x04, 0x10, 0x05, 0x10,
+                0x06, 0x10, 0x0C, 0x10, 0x0D, 0x10,
+            ),
         )
-        val payload = decode(resp)
+        applyConfig(decode(resp))
+    }
+
+    /** Parse a keyed-config payload (GET response or 0x62 push) and publish state. */
+    private fun applyConfig(payload: ByteArray) {
         val keyed = Energy.parseKeyedValues(payload)
         keyed[Energy.CHARGE_LIMIT_KEY]?.let { rawConfig[Energy.CHARGE_LIMIT_KEY] = it }
         keyed[Energy.ENERGY_STORAGE_KEY]?.let { rawConfig[Energy.ENERGY_STORAGE_KEY] = it }
@@ -256,11 +269,14 @@ class DjiPowerDevice(
             switchList = Energy.parsePortSwitches(it)
             onSwitches(switchList)
         }
-
-        val limits = rawConfig[Energy.CHARGE_LIMIT_KEY]?.let { Energy.parseChargeLimits(it) } ?: return
-        val reserve = rawConfig[Energy.ENERGY_STORAGE_KEY]?.let { Energy.parseReserve(it) }
-        val acTimeout = rawConfig[Energy.DISPLAY_KEY]?.let { Energy.parseAcTimeout(it) }
-        onConfig(EnergyConfig(limits, reserve, acTimeout))
+        rawConfig[Energy.CHARGE_LIMIT_KEY]?.let { Energy.parseChargeLimits(it) }?.let { limits ->
+            val reserve = rawConfig[Energy.ENERGY_STORAGE_KEY]?.let { Energy.parseReserve(it) }
+            val acTimeout = rawConfig[Energy.DISPLAY_KEY]?.let { Energy.parseAcTimeout(it) }
+            onConfig(EnergyConfig(limits, reserve, acTimeout))
+        }
+        if (keyed.keys.any { it == 0x00 || it == 0x02 || it == 0x04 || it == 0x0C }) {
+            onDeviceInfo(DeviceInfoParser.parse(payload))
+        }
     }
 
     /** Toggle one station output on/off, preserving its row body; then re-read. */
