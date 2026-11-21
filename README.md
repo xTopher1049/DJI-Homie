@@ -1,4 +1,4 @@
-# DJI Power Companion
+# DJI Homie
 
 An **unofficial, open-source** Android app to monitor and control a **DJI Power
 1000** portable power station over **local Bluetooth** — no DJI cloud dependency
@@ -32,8 +32,10 @@ app is connected, the DJI Home app can't connect over BLE, and vice-versa.
 
 Two ways:
 
-1. **In-app** — use the onboarding screen (DJI account + captcha). *(wizard UI
-   in progress; the `cloud/DjiCloud.kt` client that powers it is complete.)*
+1. **In-app** — the first-run onboarding wizard signs in to your DJI account,
+   shows DJI's image captcha, fetches your pair key, scans Bluetooth for your
+   station's MAC, and stores both encrypted on-device. The account is never used
+   again.
 2. **Standalone script** — run `tools/dji_get_pair_key.py` on any computer; it
    does the same login and prints your 32-hex pair key. Paste it into the app's
    manual screen along with your station's MAC.

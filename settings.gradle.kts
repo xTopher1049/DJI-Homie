@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "DJI Power Companion"
+rootProject.name = "DJI Homie"
 include(":app")

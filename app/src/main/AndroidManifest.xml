@@ -17,7 +17,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="DJI Power Companion"
+        android:label="DJI Homie"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.NoActionBar">
         <activity
