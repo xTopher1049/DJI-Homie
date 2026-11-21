@@ -6,16 +6,20 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Power
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -48,16 +52,24 @@ class MainActivity : ComponentActivity() {
         val creds = CredStore(this)
         val scanner = DeviceScanner(this)
         setContent {
-            val dark = isSystemInDarkTheme()
+            var themeMode by remember { mutableStateOf(creds.themeMode) }
+            val dark = when (themeMode) {
+                "dark" -> true
+                "light" -> false
+                else -> isSystemInDarkTheme()
+            }
             MaterialTheme(colorScheme = if (dark) DjiDarkScheme else DjiLightScheme) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     var onboarded by remember { mutableStateOf(creds.isOnboarded) }
                     if (!onboarded) {
                         OnboardingScreen(creds, scanner, onDone = { onboarded = true })
                     } else {
-                        Dashboard(creds, onSignOut = {
-                            creds.clear(); device?.disconnect(); onboarded = false
-                        })
+                        Dashboard(
+                            creds,
+                            themeMode = themeMode,
+                            onThemeChange = { creds.themeMode = it; themeMode = it },
+                            onSignOut = { creds.clear(); device?.disconnect(); onboarded = false },
+                        )
                     }
                 }
             }
@@ -72,7 +84,12 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun Dashboard(creds: CredStore, onSignOut: () -> Unit) {
+    private fun Dashboard(
+        creds: CredStore,
+        themeMode: String,
+        onThemeChange: (String) -> Unit,
+        onSignOut: () -> Unit,
+    ) {
         val scope = rememberCoroutineScope()
         var status by remember { mutableStateOf("Idle") }
         var state by remember { mutableStateOf<PowerState?>(null) }
@@ -80,6 +97,8 @@ class MainActivity : ComponentActivity() {
         var tab by remember { mutableStateOf(0) }
         var switches by remember { mutableStateOf<List<PortSwitch>>(emptyList()) }
         var confirmForget by remember { mutableStateOf(false) }
+        var rssi by remember { mutableStateOf<Int?>(null) }
+        var showSettings by remember { mutableStateOf(false) }
 
         LaunchedEffect(Unit) {
             val mac = creds.mac ?: return@LaunchedEffect
@@ -92,10 +111,22 @@ class MainActivity : ComponentActivity() {
                 onEvent = { e -> runOnUiThread { status = e } },
                 onConfig = { c -> runOnUiThread { energy = c } },
                 onSwitches = { sw -> runOnUiThread { switches = sw } },
+                onRssi = { r -> runOnUiThread { rssi = r } },
             ).also { it.connect() }
         }
         LaunchedEffect(tab) { if (tab == 1) runCatching { device?.readConfig() } }
 
+        if (showSettings) {
+            SettingsScreen(
+                themeMode = themeMode,
+                onThemeChange = onThemeChange,
+                acAlwaysOn = energy?.acTimeoutSec?.let { it == 0 },
+                scope = scope,
+                onError = { status = it },
+                onForget = { confirmForget = true },
+                onBack = { showSettings = false },
+            )
+        } else {
         Column(
             Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -111,7 +142,13 @@ class MainActivity : ComponentActivity() {
                     Text(status, style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                TextButton(onClick = { confirmForget = true }) { Text("Forget") }
+                Row(verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SignalMeter(rssi)
+                    IconButton(onClick = { showSettings = true }) {
+                        Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                    }
+                }
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -121,6 +158,7 @@ class MainActivity : ComponentActivity() {
 
             if (tab == 0) StatusTab(state, switches, scope) { status = it }
             else EnergyPanel(energy, scope) { status = it }
+        }
         }
 
         if (confirmForget) {
@@ -264,6 +302,74 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    @Composable
+    private fun SettingsScreen(
+        themeMode: String,
+        onThemeChange: (String) -> Unit,
+        acAlwaysOn: Boolean?,
+        scope: CoroutineScope,
+        onError: (String) -> Unit,
+        onForget: () -> Unit,
+        onBack: () -> Unit,
+    ) {
+        Column(
+            Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                }
+                Text("Advanced settings", style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold)
+            }
+
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Appearance", style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold)
+                    Text("Choose how the app looks.", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    listOf("auto" to "Automatic (system)", "light" to "Light", "dark" to "Dark")
+                        .forEach { (key, label) ->
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(selected = themeMode == key, onClick = { onThemeChange(key) })
+                                Text(label)
+                            }
+                        }
+                }
+            }
+
+            acAlwaysOn?.let { on ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Text("Keep AC on (UPS mode)", style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold)
+                            Switch(checked = on, onCheckedChange = { v ->
+                                scope.launch {
+                                    runCatching { device?.setAcAlwaysOn(v) }
+                                        .onFailure { onError("UPS set failed: ${it.message}") }
+                                }
+                            })
+                        }
+                        Text("Normally the AC output auto-shuts off after a while when the load is " +
+                            "low. Turn this on to keep AC powered no matter what — useful for running " +
+                            "the station as a UPS. (Sets the AC-output timeout to Never.)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+
+            OutlinedButton(onClick = onForget, modifier = Modifier.fillMaxWidth()) {
+                Text("Forget station")
+            }
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         device?.disconnect()
@@ -362,5 +468,34 @@ private fun PortCard(label: String, icon: ImageVector, detail: String, checked: 
                 Switch(checked = checked, onCheckedChange = onToggle)
             }
         }
+    }
+}
+
+@Composable
+private fun SignalMeter(rssi: Int?) {
+    val bars = rssi?.let {
+        when {
+            it >= -55 -> 4
+            it >= -67 -> 3
+            it >= -78 -> 2
+            it >= -90 -> 1
+            else -> 0
+        }
+    } ?: 0
+    Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        (1..4).forEach { i ->
+            Box(
+                Modifier
+                    .width(4.dp)
+                    .height((4 + i * 4).dp)
+                    .background(
+                        if (i <= bars) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.surfaceVariant,
+                        RoundedCornerShape(1.dp),
+                    )
+            )
+        }
+        Spacer(Modifier.width(4.dp))
+        Text(rssi?.let { "$it dBm" } ?: "—", style = MaterialTheme.typography.bodySmall)
     }
 }

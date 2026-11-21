@@ -9,6 +9,8 @@ import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import com.djipower.companion.protocol.Duml
 import com.djipower.companion.protocol.Energy
 import com.djipower.companion.protocol.EnergyConfig
@@ -38,6 +40,7 @@ class DjiPowerDevice(
     private val onEvent: (String) -> Unit = {},
     private val onConfig: (EnergyConfig) -> Unit = {},
     private val onSwitches: (List<PortSwitch>) -> Unit = {},
+    private val onRssi: (Int) -> Unit = {},
 ) {
     private val pairKey = Duml.normalizePairKey(pairKeyHex)
     private val stream = Duml.Stream()
@@ -48,6 +51,13 @@ class DjiPowerDevice(
     private val rawConfig = HashMap<Int, ByteArray>()
     private val setRules = 0x0E to Duml.hexToBytes("0c001e00efffff3f")
     private var switchList: List<PortSwitch> = emptyList()
+    private val rssiHandler = Handler(Looper.getMainLooper())
+    private val rssiRunnable = object : Runnable {
+        override fun run() {
+            gatt?.readRemoteRssi()
+            rssiHandler.postDelayed(this, 4000)
+        }
+    }
     @Volatile var authenticated = false; private set
 
     private fun nextSeq(): Int { sequence = (sequence + 1) and 0xFFFF; return sequence }
@@ -60,6 +70,7 @@ class DjiPowerDevice(
 
     fun disconnect() {
         authenticated = false
+        rssiHandler.removeCallbacks(rssiRunnable)
         try { gatt?.disconnect(); gatt?.close() } catch (_: Exception) {}
         gatt = null
     }
@@ -71,6 +82,7 @@ class DjiPowerDevice(
                 g.discoverServices()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 authenticated = false
+                rssiHandler.removeCallbacks(rssiRunnable)
                 onEvent("Disconnected")
             }
         }
@@ -109,6 +121,10 @@ class DjiPowerDevice(
 
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray) {
             handleIncoming(value)
+        }
+
+        override fun onReadRemoteRssi(g: BluetoothGatt, rssi: Int, status: Int) {
+            if (status == BluetoothGatt.GATT_SUCCESS) onRssi(rssi)
         }
     }
 
@@ -176,8 +192,9 @@ class DjiPowerDevice(
                 val result = decode(request(Duml.AUTH_COMMAND, material))
                 when (result.getOrNull(0)?.toInt() ?: -1) {
                     0x00 -> {
-                        authenticated = true; onEvent("Authenticated")
+                        authenticated = true; onEvent("Locally authenticated")
                         runCatching { readConfig() }
+                        rssiHandler.post(rssiRunnable)
                         return@runBlocking
                     }
                     0x03 -> if (attempt == 0) return@repeat  // retry once with a fresh challenge
@@ -226,13 +243,14 @@ class DjiPowerDevice(
     suspend fun readConfig() {
         val resp = request(
             Duml.GET_COMMAND,
-            byteArrayOf(0x00, 0x05, 0x10, 0x06, 0x10, 0x0D, 0x10),
+            byteArrayOf(0x00, 0x05, 0x10, 0x06, 0x10, 0x0C, 0x10, 0x0D, 0x10),
         )
         val payload = decode(resp)
         val keyed = Energy.parseKeyedValues(payload)
         keyed[Energy.CHARGE_LIMIT_KEY]?.let { rawConfig[Energy.CHARGE_LIMIT_KEY] = it }
         keyed[Energy.ENERGY_STORAGE_KEY]?.let { rawConfig[Energy.ENERGY_STORAGE_KEY] = it }
         keyed[Energy.POWER_SWITCH_KEY]?.let { rawConfig[Energy.POWER_SWITCH_KEY] = it }
+        keyed[Energy.DISPLAY_KEY]?.let { rawConfig[Energy.DISPLAY_KEY] = it }
 
         rawConfig[Energy.POWER_SWITCH_KEY]?.let {
             switchList = Energy.parsePortSwitches(it)
@@ -241,7 +259,8 @@ class DjiPowerDevice(
 
         val limits = rawConfig[Energy.CHARGE_LIMIT_KEY]?.let { Energy.parseChargeLimits(it) } ?: return
         val reserve = rawConfig[Energy.ENERGY_STORAGE_KEY]?.let { Energy.parseReserve(it) }
-        onConfig(EnergyConfig(limits, reserve))
+        val acTimeout = rawConfig[Energy.DISPLAY_KEY]?.let { Energy.parseAcTimeout(it) }
+        onConfig(EnergyConfig(limits, reserve, acTimeout))
     }
 
     /** Toggle one station output on/off, preserving its row body; then re-read. */
@@ -281,6 +300,17 @@ class DjiPowerDevice(
         if (enabled != null) v[1] = (if (enabled) 1 else 2).toByte()
         if (percent != null) writeU16(v, 2, percent.coerceIn(min, max))
         request(Duml.SET_COMMAND, buildKeyedSet(listOf(Energy.ENERGY_STORAGE_KEY to v, setRules)))
+        readConfig()
+    }
+
+    /** UPS mode: AC output stays on regardless of load (timeout 0 = never). */
+    suspend fun setAcAlwaysOn(enabled: Boolean) {
+        val cur = rawConfig[Energy.DISPLAY_KEY]
+            ?: throw IllegalStateException("device settings not loaded yet")
+        if (cur.size < 12) throw IllegalStateException("unexpected device-settings size")
+        val v = cur.copyOf()
+        writeU32(v, 8, if (enabled) 0 else 1800)
+        request(Duml.SET_COMMAND, buildKeyedSet(listOf(Energy.DISPLAY_KEY to v, setRules)))
         readConfig()
     }
 }

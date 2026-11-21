@@ -29,6 +29,10 @@ class CredStore(context: Context) {
         get() = prefs.getString("name", null)
         set(v) = prefs.edit().putString("name", v).apply()
 
+    var themeMode: String
+        get() = prefs.getString("theme_mode", "auto") ?: "auto"
+        set(v) = prefs.edit().putString("theme_mode", v).apply()
+
     val isOnboarded: Boolean
         get() = !mac.isNullOrBlank() && (pairKey?.length == 32)
 
