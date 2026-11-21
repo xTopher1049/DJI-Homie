@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.dp
 import com.djipower.companion.ble.DeviceScanner
 import com.djipower.companion.ble.DjiPowerDevice
 import com.djipower.companion.data.CredStore
+import com.djipower.companion.protocol.EnergyConfig
 import com.djipower.companion.protocol.PowerState
 import kotlinx.coroutines.launch
 
@@ -67,8 +68,9 @@ class MainActivity : ComponentActivity() {
         val scope = rememberCoroutineScope()
         var status by remember { mutableStateOf("Idle") }
         var state by remember { mutableStateOf<PowerState?>(null) }
+        var energy by remember { mutableStateOf<EnergyConfig?>(null) }
+        var tab by remember { mutableStateOf(0) }
 
-        // Auto-connect once on entry.
         LaunchedEffect(Unit) {
             val mac = creds.mac ?: return@LaunchedEffect
             val key = creds.pairKey ?: return@LaunchedEffect
@@ -78,6 +80,7 @@ class MainActivity : ComponentActivity() {
                 context = this@MainActivity, address = mac, pairKeyHex = key,
                 onState = { s -> runOnUiThread { state = s } },
                 onEvent = { e -> runOnUiThread { status = e } },
+                onConfig = { c -> runOnUiThread { energy = c } },
             ).also { it.connect() }
         }
 
@@ -92,26 +95,92 @@ class MainActivity : ComponentActivity() {
             }
             Text("Status: $status")
 
-            state?.let { s ->
-                HorizontalDivider()
-                s.batteryPercent?.let { Text("Battery: ${"%.1f".format(it)} %",
-                    style = MaterialTheme.typography.titleLarge) }
-                s.runtimeMin?.let { Text("Remaining: ${it / 60} h ${it % 60} min") }
-                Text("Output: ${s.outputW ?: 0} W     Input: ${s.inputW ?: 0} W")
-                Text("AC out: ${s.acOutputW} W     DC out: ${s.dcOutputW} W")
-                s.temperatureC?.let { Text("Battery temp: ${"%.1f".format(it)} °C") }
-                s.charging?.let { Text(if (it) "Charging" else "Discharging") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = tab == 0, onClick = { tab = 0 }, label = { Text("Status") })
+                FilterChip(selected = tab == 1, onClick = { tab = 1 }, label = { Text("Energy") })
+            }
+            HorizontalDivider()
 
-                HorizontalDivider()
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(onClick = { scope.launch {
-                        runCatching { device?.setAcOutput(true) }
-                            .onFailure { status = "AC on failed: ${it.message}" } } }) { Text("AC On") }
-                    OutlinedButton(onClick = { scope.launch {
-                        runCatching { device?.setAcOutput(false) }
-                            .onFailure { status = "AC off failed: ${it.message}" } } }) { Text("AC Off") }
+            if (tab == 0) {
+                state?.let { s ->
+                    s.batteryPercent?.let { Text("Battery: ${"%.1f".format(it)} %",
+                        style = MaterialTheme.typography.titleLarge) }
+                    s.runtimeMin?.let { Text("Remaining: ${it / 60} h ${it % 60} min") }
+                    Text("Output: ${s.outputW ?: 0} W     Input: ${s.inputW ?: 0} W")
+                    Text("AC out: ${s.acOutputW} W     DC out: ${s.dcOutputW} W")
+                    s.temperatureC?.let { Text("Battery temp: ${"%.1f".format(it)} °C") }
+                    s.charging?.let { Text(if (it) "Charging" else "Discharging") }
+                    HorizontalDivider()
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Button(onClick = { scope.launch {
+                            runCatching { device?.setAcOutput(true) }
+                                .onFailure { status = "AC on failed: ${it.message}" } } }) { Text("AC On") }
+                        OutlinedButton(onClick = { scope.launch {
+                            runCatching { device?.setAcOutput(false) }
+                                .onFailure { status = "AC off failed: ${it.message}" } } }) { Text("AC Off") }
+                    }
+                } ?: Text("Waiting for first telemetry…")
+            } else {
+                EnergyPanel(energy, scope) { status = it }
+            }
+        }
+    }
+
+    @Composable
+    private fun EnergyPanel(
+        energy: EnergyConfig?,
+        scope: kotlinx.coroutines.CoroutineScope,
+        onError: (String) -> Unit,
+    ) {
+        val cfg = energy ?: run { Text("Loading energy settings…"); return }
+        val cl = cfg.limits
+        var dsch by remember(cfg) { mutableStateOf(cl.discharge.toFloat()) }
+        var rch by remember(cfg) { mutableStateOf(cl.recharge.toFloat()) }
+
+        Text("Discharge limit: ${dsch.toInt()}%      Recharge limit: ${rch.toInt()}%",
+            style = MaterialTheme.typography.titleMedium)
+        RangeSlider(
+            value = dsch..rch,
+            onValueChange = { r -> dsch = r.start; rch = r.endInclusive },
+            valueRange = cl.dischargeMin.toFloat()..cl.rechargeMax.toFloat(),
+            onValueChangeFinished = {
+                scope.launch {
+                    runCatching { device?.setChargeLimits(dsch.toInt(), rch.toInt()) }
+                        .onFailure { onError("limit set failed: ${it.message}") }
                 }
-            } ?: Text("Waiting for first telemetry…")
+            },
+        )
+
+        cfg.reserve?.takeIf { it.available }?.let { r ->
+            var on by remember(cfg) { mutableStateOf(r.enabled) }
+            var pct by remember(cfg) { mutableStateOf(r.percent.toFloat()) }
+            HorizontalDivider()
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Custom backup reserve", style = MaterialTheme.typography.titleMedium)
+                Switch(checked = on, onCheckedChange = { v ->
+                    on = v
+                    scope.launch {
+                        runCatching { device?.setReserve(enabled = v) }
+                            .onFailure { onError("reserve toggle failed: ${it.message}") }
+                    }
+                })
+            }
+            if (on) {
+                val lo = (cl.discharge + 5).coerceAtMost(cl.recharge)
+                val hi = cl.recharge
+                Text("Reserve level: ${pct.toInt()}%")
+                Slider(
+                    value = pct.coerceIn(lo.toFloat(), hi.toFloat()),
+                    onValueChange = { pct = it },
+                    valueRange = lo.toFloat()..hi.toFloat(),
+                    onValueChangeFinished = {
+                        scope.launch {
+                            runCatching { device?.setReserve(percent = pct.toInt(), min = lo, max = hi) }
+                                .onFailure { onError("reserve level failed: ${it.message}") }
+                        }
+                    },
+                )
+            }
         }
     }
 

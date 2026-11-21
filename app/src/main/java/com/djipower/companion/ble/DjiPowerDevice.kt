@@ -10,6 +10,8 @@ import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.content.Context
 import com.djipower.companion.protocol.Duml
+import com.djipower.companion.protocol.Energy
+import com.djipower.companion.protocol.EnergyConfig
 import com.djipower.companion.protocol.PowerState
 import com.djipower.companion.protocol.Report
 import java.util.UUID
@@ -33,6 +35,7 @@ class DjiPowerDevice(
     private val encryptedTransport: Boolean = true, // true for the original Power 1000
     private val onState: (PowerState) -> Unit = {},
     private val onEvent: (String) -> Unit = {},
+    private val onConfig: (EnergyConfig) -> Unit = {},
 ) {
     private val pairKey = Duml.normalizePairKey(pairKeyHex)
     private val stream = Duml.Stream()
@@ -40,6 +43,8 @@ class DjiPowerDevice(
     private var writeChar: BluetoothGattCharacteristic? = null
     private var sequence = 0
     private val pending = HashMap<Int, CompletableDeferred<Duml.Packet>>()
+    private val rawConfig = HashMap<Int, ByteArray>()
+    private val setRules = 0x0E to Duml.hexToBytes("0c001e00efffff3f")
     @Volatile var authenticated = false; private set
 
     private fun nextSeq(): Int { sequence = (sequence + 1) and 0xFFFF; return sequence }
@@ -154,7 +159,11 @@ class DjiPowerDevice(
                 val material = byteArrayOf(Duml.CHECK_SECRET_KEY.toByte()) + nonce + pairKey + byteArrayOf(0x00)
                 val result = decode(request(Duml.AUTH_COMMAND, material))
                 when (result.getOrNull(0)?.toInt() ?: -1) {
-                    0x00 -> { authenticated = true; onEvent("Authenticated"); return@runBlocking }
+                    0x00 -> {
+                        authenticated = true; onEvent("Authenticated")
+                        runCatching { readEnergyConfig() }
+                        return@runBlocking
+                    }
                     0x03 -> if (attempt == 0) return@repeat  // retry once with a fresh challenge
                 }
                 throw Duml.ProtocolException("station rejected authentication; if the key is right, power-cycle it")
@@ -185,5 +194,49 @@ class DjiPowerDevice(
             value.forEach { out.add(it) }
         }
         return out.toByteArray()
+    }
+
+    // ---- Energy Management ---------------------------------------------------
+
+    private fun writeU32(b: ByteArray, i: Int, v: Int) {
+        for (k in 0 until 4) b[i + k] = ((v shr (8 * k)) and 0xFF).toByte()
+    }
+
+    private fun writeU16(b: ByteArray, i: Int, v: Int) {
+        b[i] = (v and 0xFF).toByte(); b[i + 1] = ((v shr 8) and 0xFF).toByte()
+    }
+
+    /** GET charge limits (0x05) + backup reserve (0x06), parse, store raw, publish. */
+    suspend fun readEnergyConfig() {
+        val resp = request(Duml.GET_COMMAND, byteArrayOf(0x00, 0x05, 0x10, 0x06, 0x10))
+        val payload = decode(resp)
+        val keyed = Energy.parseKeyedValues(payload)
+        keyed[Energy.CHARGE_LIMIT_KEY]?.let { rawConfig[Energy.CHARGE_LIMIT_KEY] = it }
+        keyed[Energy.ENERGY_STORAGE_KEY]?.let { rawConfig[Energy.ENERGY_STORAGE_KEY] = it }
+        val limits = rawConfig[Energy.CHARGE_LIMIT_KEY]?.let { Energy.parseChargeLimits(it) } ?: return
+        val reserve = rawConfig[Energy.ENERGY_STORAGE_KEY]?.let { Energy.parseReserve(it) }
+        onConfig(EnergyConfig(limits, reserve))
+    }
+
+    /** Set discharge/recharge limits, preserving the record's other bytes. */
+    suspend fun setChargeLimits(discharge: Int, recharge: Int) {
+        val cur = rawConfig[Energy.CHARGE_LIMIT_KEY]
+            ?: throw IllegalStateException("charge limits not loaded yet")
+        val v = cur.copyOf()
+        writeU32(v, 8, recharge)
+        writeU32(v, 20, discharge)
+        request(Duml.SET_COMMAND, buildKeyedSet(listOf(Energy.CHARGE_LIMIT_KEY to v, setRules)))
+        readEnergyConfig()
+    }
+
+    /** Enable/disable the custom backup reserve and/or set its level. */
+    suspend fun setReserve(enabled: Boolean? = null, percent: Int? = null, min: Int = 0, max: Int = 100) {
+        val cur = rawConfig[Energy.ENERGY_STORAGE_KEY] ?: return
+        if ((cur[0].toInt() and 0xFF) != 1) throw IllegalStateException("no custom reserve on this station")
+        val v = cur.copyOf()
+        if (enabled != null) v[1] = (if (enabled) 1 else 2).toByte()
+        if (percent != null) writeU16(v, 2, percent.coerceIn(min, max))
+        request(Duml.SET_COMMAND, buildKeyedSet(listOf(Energy.ENERGY_STORAGE_KEY to v, setRules)))
+        readEnergyConfig()
     }
 }
