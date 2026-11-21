@@ -2,6 +2,10 @@ package com.djipower.companion.ui
 
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -82,7 +86,19 @@ fun OnboardingScreen(credStore: CredStore, scanner: DeviceScanner, onDone: () ->
 
             Step.CAPTCHA -> {
                 Text("Type the characters shown (case-sensitive):")
-                captchaBmp?.let { Image(it, contentDescription = "captcha") }
+                captchaBmp?.let {
+                    Image(
+                        bitmap = it,
+                        contentDescription = "captcha",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(96.dp)
+                            .background(Color.White)
+                            .padding(6.dp),
+                        contentScale = ContentScale.Fit,
+                        filterQuality = FilterQuality.None,
+                    )
+                }
                 OutlinedTextField(captchaCode, { captchaCode = it }, label = { Text("Captcha") },
                     singleLine = true, modifier = Modifier.fillMaxWidth())
                 Button(enabled = !busy && captchaCode.isNotBlank(), onClick = {

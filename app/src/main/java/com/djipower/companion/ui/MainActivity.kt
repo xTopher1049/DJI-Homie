@@ -6,6 +6,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -37,12 +38,18 @@ class MainActivity : ComponentActivity() {
         val creds = CredStore(this)
         val scanner = DeviceScanner(this)
         setContent {
-            MaterialTheme {
-                var onboarded by remember { mutableStateOf(creds.isOnboarded) }
-                if (!onboarded) {
-                    OnboardingScreen(creds, scanner, onDone = { onboarded = true })
-                } else {
-                    Dashboard(creds, onSignOut = { creds.clear(); device?.disconnect(); onboarded = false })
+            val dark = isSystemInDarkTheme()
+            MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background,
+                ) {
+                    var onboarded by remember { mutableStateOf(creds.isOnboarded) }
+                    if (!onboarded) {
+                        OnboardingScreen(creds, scanner, onDone = { onboarded = true })
+                    } else {
+                        Dashboard(creds, onSignOut = { creds.clear(); device?.disconnect(); onboarded = false })
+                    }
                 }
             }
         }
