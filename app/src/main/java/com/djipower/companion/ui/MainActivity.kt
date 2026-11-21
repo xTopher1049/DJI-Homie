@@ -4,6 +4,7 @@ import android.Manifest
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -99,6 +100,7 @@ class MainActivity : ComponentActivity() {
         var confirmForget by remember { mutableStateOf(false) }
         var rssi by remember { mutableStateOf<Int?>(null) }
         var showSettings by remember { mutableStateOf(false) }
+        var showUpsConfig by remember { mutableStateOf(false) }
 
         LaunchedEffect(Unit) {
             val mac = creds.mac ?: return@LaunchedEffect
@@ -116,13 +118,13 @@ class MainActivity : ComponentActivity() {
         }
         LaunchedEffect(tab) { if (tab == 1) runCatching { device?.readConfig() } }
 
+        // System back gesture closes an open menu instead of exiting.
+        BackHandler(enabled = showSettings) { showSettings = false }
+
         if (showSettings) {
             SettingsScreen(
                 themeMode = themeMode,
                 onThemeChange = onThemeChange,
-                acAlwaysOn = energy?.acTimeoutSec?.let { it == 0 },
-                scope = scope,
-                onError = { status = it },
                 onForget = { confirmForget = true },
                 onBack = { showSettings = false },
             )
@@ -156,9 +158,38 @@ class MainActivity : ComponentActivity() {
                 FilterChip(tab == 1, { tab = 1 }, { Text("Energy") })
             }
 
-            if (tab == 0) StatusTab(state, switches, scope) { status = it }
+            if (tab == 0) StatusTab(state, switches, scope, onAcConfig = { showUpsConfig = true }) { status = it }
             else EnergyPanel(energy, scope) { status = it }
         }
+        }
+
+        if (showUpsConfig) {
+            val upsOn = energy?.acTimeoutSec?.let { it == 0 } ?: false
+            AlertDialog(
+                onDismissRequest = { showUpsConfig = false },
+                title = { Text("AC output · UPS mode") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Text("Keep AC on (UPS mode)")
+                            Switch(checked = upsOn, onCheckedChange = { v ->
+                                scope.launch {
+                                    runCatching { device?.setAcAlwaysOn(v) }
+                                        .onFailure { status = "UPS set failed: ${it.message}" }
+                                }
+                            })
+                        }
+                        Text("Normally the AC output auto-shuts off after a while when the load is " +
+                            "low. Turn this on to keep AC powered no matter what — useful for running " +
+                            "the station as a UPS. (Sets the AC-output timeout to Never.) Note: leaving " +
+                            "it on draws more idle power, since the inverter stays active.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                },
+                confirmButton = { TextButton(onClick = { showUpsConfig = false }) { Text("Done") } },
+            )
         }
 
         if (confirmForget) {
@@ -182,7 +213,7 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun StatusTab(
         state: PowerState?, switches: List<PortSwitch>,
-        scope: CoroutineScope, onError: (String) -> Unit,
+        scope: CoroutineScope, onAcConfig: () -> Unit, onError: (String) -> Unit,
     ) {
         val s = state ?: run {
             Card(Modifier.fillMaxWidth()) {
@@ -217,7 +248,7 @@ class MainActivity : ComponentActivity() {
                         runCatching { device?.setPortSwitch(sw.type, sw.seq, v) }
                             .onFailure { onError("switch failed: ${it.message}") }
                     }
-                })
+                }, onConfig = if (sw.type == 2) onAcConfig else null)
         }
         // Telemetry-only ports (power but not switchable)
         s.ports.filter { (it.type to it.seq) !in switchKeys }.forEach { pp ->
@@ -306,9 +337,6 @@ class MainActivity : ComponentActivity() {
     private fun SettingsScreen(
         themeMode: String,
         onThemeChange: (String) -> Unit,
-        acAlwaysOn: Boolean?,
-        scope: CoroutineScope,
-        onError: (String) -> Unit,
         onForget: () -> Unit,
         onBack: () -> Unit,
     ) {
@@ -338,29 +366,6 @@ class MainActivity : ComponentActivity() {
                                 Text(label)
                             }
                         }
-                }
-            }
-
-            acAlwaysOn?.let { on ->
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically) {
-                            Text("Keep AC on (UPS mode)", style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold)
-                            Switch(checked = on, onCheckedChange = { v ->
-                                scope.launch {
-                                    runCatching { device?.setAcAlwaysOn(v) }
-                                        .onFailure { onError("UPS set failed: ${it.message}") }
-                                }
-                            })
-                        }
-                        Text("Normally the AC output auto-shuts off after a while when the load is " +
-                            "low. Turn this on to keep AC powered no matter what — useful for running " +
-                            "the station as a UPS. (Sets the AC-output timeout to Never.)",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
                 }
             }
 
@@ -448,10 +453,13 @@ private fun StatCard(modifier: Modifier, title: String, value: String, icon: Ima
 }
 
 @Composable
-private fun PortCard(label: String, icon: ImageVector, detail: String, checked: Boolean?, onToggle: ((Boolean) -> Unit)?) {
+private fun PortCard(
+    label: String, icon: ImageVector, detail: String,
+    checked: Boolean?, onToggle: ((Boolean) -> Unit)?, onConfig: (() -> Unit)? = null,
+) {
     Card(Modifier.fillMaxWidth()) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            Modifier.fillMaxWidth().padding(start = 16.dp, top = 4.dp, bottom = 4.dp, end = 8.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -464,8 +472,17 @@ private fun PortCard(label: String, icon: ImageVector, detail: String, checked: 
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            if (checked != null && onToggle != null) {
-                Switch(checked = checked, onCheckedChange = onToggle)
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                if (onConfig != null) {
+                    IconButton(onClick = onConfig) {
+                        Icon(Icons.Filled.Settings, contentDescription = "Configure",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                if (checked != null && onToggle != null) {
+                    Switch(checked = checked, onCheckedChange = onToggle)
+                }
             }
         }
     }
