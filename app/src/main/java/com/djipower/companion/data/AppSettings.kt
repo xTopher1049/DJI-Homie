@@ -63,5 +63,18 @@ class AppSettings(context: Context) {
         get() = zeroLoadEnabled || socCutoffEnabled || dutyCycleEnabled ||
             solarPriorityEnabled || stormPrepEnabled
 
+    // --- Home-screen widget snapshot (last-known telemetry) ---
+    val wBattery: Int get() = i("w_batt", -1)
+    val wOut: Int get() = i("w_out", 0)
+    val wIn: Int get() = i("w_in", 0)
+    val wRuntime: Int get() = i("w_rt", -1)
+
+    fun writeWidget(battery: Int, outW: Int, inW: Int, runtimeMin: Int) {
+        prefs.edit()
+            .putInt("w_batt", battery).putInt("w_out", outW)
+            .putInt("w_in", inW).putInt("w_rt", runtimeMin)
+            .apply()
+    }
+
     fun clearAll() = prefs.edit().clear().apply()
 }

@@ -52,5 +52,38 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <!-- Quick Settings tile: toggle AC from the shade -->
+        <service
+            android:name=".service.AcTileService"
+            android:icon="@drawable/ic_ac_tile"
+            android:label="DJI AC"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- Home-screen widget -->
+        <receiver
+            android:name=".widget.StatusWidget"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/dji_widget_info" />
+        </receiver>
+
+        <!-- Tasker / MacroDroid command receiver -->
+        <receiver
+            android:name=".service.CommandReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.djipower.companion.SET_AC" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

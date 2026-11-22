@@ -7,6 +7,7 @@ import com.djipower.companion.protocol.Duml
 import com.djipower.companion.protocol.EnergyConfig
 import com.djipower.companion.protocol.PortSwitch
 import com.djipower.companion.protocol.PowerState
+import com.djipower.companion.widget.StatusWidget
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -49,6 +50,7 @@ object Conn {
         private set
 
     private var history: HistoryStore? = null
+    private var lastWidgetWrite = 0L
 
     fun history(context: Context): HistoryStore =
         history ?: HistoryStore(context.applicationContext).also { history = it }
@@ -69,6 +71,7 @@ object Conn {
                 _state.value = s
                 if (hist.record(s.batteryPercent?.toFloat(), s.outputW, s.inputW))
                     _historyRev.value = _historyRev.value + 1
+                maybeUpdateWidget(app, s)
             },
             onEvent = { e -> _status.value = e },
             onConfig = { c -> _energy.value = c },
@@ -80,6 +83,16 @@ object Conn {
                     .takeLast(50)
             },
         ).also { it.connect() }
+    }
+
+    private fun maybeUpdateWidget(context: Context, s: PowerState) {
+        val t = System.currentTimeMillis()
+        if (t - lastWidgetWrite < 10_000) return
+        lastWidgetWrite = t
+        AppSettings(context).writeWidget(
+            s.batteryPercent?.toInt() ?: -1, s.outputW ?: 0, s.inputW ?: 0, s.runtimeMin ?: -1,
+        )
+        StatusWidget.refresh(context)
     }
 
     /** Push a transient status line (e.g. a command error) into the status flow. */

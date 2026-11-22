@@ -1,6 +1,7 @@
 package com.djipower.companion.service
 
 import android.content.Context
+import android.content.Intent
 import android.os.SystemClock
 import com.djipower.companion.data.AppSettings
 import com.djipower.companion.data.Conn
@@ -24,6 +25,8 @@ class AutomationEngine(context: Context) {
     private var zeroBelowSince = 0L
     private var dutyAnchor = 0L
     private var dutyOn = true
+    private var lastLow = false
+    private var lastGrid = false
 
     private fun now() = SystemClock.elapsedRealtime()
 
@@ -67,6 +70,14 @@ class AutomationEngine(context: Context) {
             desired = false
         }
 
+        // --- Broadcast events for Tasker / MacroDroid ---
+        val low = battery != null && battery <= EVENT_LOW_BATTERY
+        if (low && !lastLow) broadcastEvent("LOW_BATTERY")
+        lastLow = low
+        val gridNow = inputW >= GRID_PRESENT_W
+        if (!gridNow && lastGrid) broadcastEvent("GRID_LOST")
+        lastGrid = gridNow
+
         // --- Apply only on a real change ---
         if (desired != null && acOn != null && desired != acOn) {
             runCatching { device.setAcOutput(desired) }
@@ -94,6 +105,20 @@ class AutomationEngine(context: Context) {
             s.stormActive = false
             runCatching { device.setChargeLimits(limits.discharge, restore) }
         }
+    }
+
+    private fun broadcastEvent(event: String) {
+        runCatching {
+            app.sendBroadcast(
+                Intent(EVENT_ACTION).putExtra("event", event).setPackage(null),
+            )
+        }
+    }
+
+    private companion object {
+        const val EVENT_ACTION = "com.djipower.companion.EVENT"
+        const val EVENT_LOW_BATTERY = 15.0
+        const val GRID_PRESENT_W = 10
     }
 
     private fun dutyState(s: AppSettings, n: Long): Boolean {
