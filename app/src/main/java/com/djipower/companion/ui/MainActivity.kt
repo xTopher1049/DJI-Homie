@@ -402,7 +402,7 @@ class MainActivity : ComponentActivity() {
                         di.maintenanceCharging?.let {
                             InfoRow("Maintenance charge", if (it) "Active" else "Normal")
                         }
-                        di.cloudConnected?.let { InfoRow("DJI cloud", if (it) "Connected" else "Offline") }
+                        di.cloudConnected?.let { InfoRow("Station cloud link", if (it) "Connected" else "Offline") }
                         di.screenTimeoutS?.let { InfoRow("Screen timeout", fmtTimeout(it)) }
                         di.deviceTimeoutS?.let { InfoRow("Device timeout", fmtTimeout(it)) }
                         di.tempUnitFahrenheit?.let {
@@ -411,6 +411,11 @@ class MainActivity : ComponentActivity() {
                         di.accessories.forEach { a ->
                             InfoRow("Accessory", "type ${a.type}" + (a.firmware?.let { " · $it" } ?: ""))
                         }
+                        Text("DJI Homie itself runs fully locally over Bluetooth. “Station cloud " +
+                            "link” shows the station's own dongle connection to DJI's servers, not " +
+                            "this app.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
