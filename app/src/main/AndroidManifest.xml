@@ -12,6 +12,8 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
     <!-- Cloud onboarding (one-time pair-key fetch) -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Storm prep: coarse location to look up NWS weather alerts for the user's area -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <!-- Optional always-on monitor service (only runs when a background automation is enabled) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />

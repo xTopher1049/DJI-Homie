@@ -51,8 +51,14 @@ class DjiPowerService : Service() {
         }
         val engine = AutomationEngine(this)
         scope.launch {
+            var lastStorm = 0L
             while (isActive) {
                 runCatching { engine.evaluate() }
+                val n = android.os.SystemClock.elapsedRealtime()
+                if (n - lastStorm >= 20 * 60_000L) {
+                    lastStorm = n
+                    runCatching { engine.pollStorm() }
+                }
                 delay(20_000)
             }
         }

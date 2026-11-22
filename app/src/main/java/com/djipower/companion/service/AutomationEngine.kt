@@ -4,6 +4,8 @@ import android.content.Context
 import android.os.SystemClock
 import com.djipower.companion.data.AppSettings
 import com.djipower.companion.data.Conn
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Evaluates the background automations against live telemetry on a periodic
@@ -11,17 +13,15 @@ import com.djipower.companion.data.Conn
  * with a clear precedence, so they can't fight each other:
  *
  *   base mode:  solar priority  >  duty cycle
- *   force OFF:  zero-load cutoff, storm/outage reserve
+ *   force OFF:  zero-load cutoff
  *   force OFF:  reserve (SOC) cutoff  — always wins
  *
- * AC is switched via setAcOutput (0x0D type 2), the known-good AC switch,
- * and only when the desired state actually differs from the current one.
+ * [pollStorm] is a slower, network-backed check (NWS alerts) that raises the
+ * charge limit to full during a storm and restores it afterward.
  */
 class AutomationEngine(context: Context) {
     private val app = context.applicationContext
     private var zeroBelowSince = 0L
-    private var outageSince = 0L
-    private var wasCharging = false
     private var dutyAnchor = 0L
     private var dutyOn = true
 
@@ -62,22 +62,6 @@ class AutomationEngine(context: Context) {
             zeroBelowSince = 0L
         }
 
-        // --- Storm / outage reserve: grid was present then dropped to 0 ---
-        if (s.stormReserveEnabled) {
-            if (inputW >= GRID_PRESENT_W) {
-                wasCharging = true
-                outageSince = 0L
-            } else if (wasCharging && inputW <= 0) {
-                if (outageSince == 0L) outageSince = n
-                else if (n - outageSince >= s.stormMinutes.coerceAtLeast(1) * 60_000L) {
-                    desired = false
-                }
-            }
-        } else {
-            wasCharging = false
-            outageSince = 0L
-        }
-
         // --- Reserve (SOC) cutoff always wins ---
         if (s.socCutoffEnabled && battery != null && battery <= s.socCutoffPercent) {
             desired = false
@@ -86,6 +70,29 @@ class AutomationEngine(context: Context) {
         // --- Apply only on a real change ---
         if (desired != null && acOn != null && desired != acOn) {
             runCatching { device.setAcOutput(desired) }
+        }
+    }
+
+    /** Storm prep: raise charge limit to full while a storm alert is active for the
+     *  saved location, and restore the prior limit when it clears. Call on a slow
+     *  cadence (NWS alerts change on the scale of minutes/hours). */
+    suspend fun pollStorm() {
+        val s = AppSettings(app)
+        if (!s.stormPrepEnabled) return
+        val lat = s.stormLat.toDouble()
+        val lon = s.stormLon.toDouble()
+        if (lat == 0.0 && lon == 0.0) return
+        val active = withContext(Dispatchers.IO) { WeatherMonitor.stormActive(lat, lon) } ?: return
+        val limits = Conn.energy.value?.limits ?: return
+        val device = Conn.device ?: return
+        if (active && !s.stormActive) {
+            s.stormSavedCharge = limits.recharge
+            s.stormActive = true
+            runCatching { device.setChargeLimits(limits.discharge, limits.rechargeMax) }
+        } else if (!active && s.stormActive) {
+            val restore = s.stormSavedCharge.takeIf { it in 1..100 } ?: limits.recharge
+            s.stormActive = false
+            runCatching { device.setChargeLimits(limits.discharge, restore) }
         }
     }
 
@@ -103,9 +110,5 @@ class AutomationEngine(context: Context) {
             dutyOn = true; dutyAnchor = n
         }
         return dutyOn
-    }
-
-    private companion object {
-        const val GRID_PRESENT_W = 10 // input above this counts as "on grid / charging"
     }
 }

@@ -14,6 +14,8 @@ class AppSettings(context: Context) {
     private fun b(k: String, d: Boolean) = prefs.getBoolean(k, d)
     private fun setB(k: String, v: Boolean) = prefs.edit().putBoolean(k, v).apply()
     private fun i(k: String, d: Int) = prefs.getInt(k, d)
+    private fun f(k: String, d: Float) = prefs.getFloat(k, d)
+    private fun setF(k: String, v: Float) = prefs.edit().putFloat(k, v).apply()
     private fun setI(k: String, v: Int) = prefs.edit().putInt(k, v).apply()
 
     // --- Zero-load AC cutoff (inverter parasitic-drain protection) ---
@@ -38,11 +40,17 @@ class AppSettings(context: Context) {
     var dutyPeriodMin: Int
         get() = i("duty_period_min", 60); set(v) = setI("duty_period_min", v)
 
-    // --- Storm / outage reserve (shed AC after charging input is lost) ---
-    var stormReserveEnabled: Boolean
-        get() = b("storm_on", false); set(v) = setB("storm_on", v)
-    var stormMinutes: Int
-        get() = i("storm_min", 5); set(v) = setI("storm_min", v)
+    // --- Storm prep: auto charge-to-full during a hurricane/tropical-storm alert ---
+    var stormPrepEnabled: Boolean
+        get() = b("stormprep_on", false); set(v) = setB("stormprep_on", v)
+    var stormLat: Float
+        get() = f("storm_lat", 0f); set(v) = setF("storm_lat", v)
+    var stormLon: Float
+        get() = f("storm_lon", 0f); set(v) = setF("storm_lon", v)
+    var stormSavedCharge: Int
+        get() = i("storm_saved", -1); set(v) = setI("storm_saved", v)
+    var stormActive: Boolean
+        get() = b("storm_active", false); set(v) = setB("storm_active", v)
 
     // --- Solar / alternator priority (AC on only while input exceeds threshold) ---
     var solarPriorityEnabled: Boolean
@@ -53,7 +61,7 @@ class AppSettings(context: Context) {
     /** True when any automation that needs the always-on service is enabled. */
     val serviceEnabled: Boolean
         get() = zeroLoadEnabled || socCutoffEnabled || dutyCycleEnabled ||
-            stormReserveEnabled || solarPriorityEnabled
+            solarPriorityEnabled || stormPrepEnabled
 
     fun clearAll() = prefs.edit().clear().apply()
 }

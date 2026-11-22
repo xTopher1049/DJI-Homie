@@ -4,6 +4,7 @@ import android.Manifest
 import android.os.Build
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.net.Uri
 import android.os.Bundle
 import android.os.PowerManager
@@ -63,6 +64,10 @@ class MainActivity : ComponentActivity() {
     private val permLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { }
+
+    private val locationLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> if (granted) captureStormLocation() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -134,6 +139,33 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** When storm prep is enabled, capture a coarse location once (foreground) so the
+     *  background weather poll can query NWS alerts for the user's area. */
+    fun onStormEnabled() {
+        if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            captureStormLocation()
+        } else {
+            locationLauncher.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
+        }
+    }
+
+    private fun captureStormLocation() {
+        val lm = getSystemService(LocationManager::class.java) ?: return
+        val loc = listOf(
+            LocationManager.NETWORK_PROVIDER,
+            LocationManager.GPS_PROVIDER,
+            LocationManager.PASSIVE_PROVIDER,
+        ).mapNotNull { runCatching { lm.getLastKnownLocation(it) }.getOrNull() }
+            .maxByOrNull { it.time }
+        if (loc != null) {
+            val st = AppSettings(this)
+            st.stormLat = loc.latitude.toFloat()
+            st.stormLon = loc.longitude.toFloat()
+        }
+    }
+
     @Composable
     private fun Dashboard(
         creds: CredStore,
@@ -170,6 +202,7 @@ class MainActivity : ComponentActivity() {
             AutomationsScreen(
                 onBack = { showAutomations = false },
                 onChanged = { syncServiceAndBattery() },
+                onStormEnabled = { onStormEnabled() },
             )
         } else if (showSettings) {
             SettingsScreen(
@@ -761,7 +794,11 @@ private fun SettingRow(label: String, value: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun AutomationsScreen(onBack: () -> Unit, onChanged: () -> Unit) {
+private fun AutomationsScreen(
+    onBack: () -> Unit,
+    onChanged: () -> Unit,
+    onStormEnabled: () -> Unit,
+) {
     val context = LocalContext.current
     val s = remember { AppSettings(context) }
     var rev by remember { mutableStateOf(0) }
@@ -809,12 +846,20 @@ private fun AutomationsScreen(onBack: () -> Unit, onChanged: () -> Unit) {
                 NumField("Every", s.dutyPeriodMin, "min") { s.dutyPeriodMin = it; changed() }
             }
             AutomationCard(
-                "Storm / outage reserve",
-                "After charging input is lost (grid down), sheds AC output to preserve battery " +
-                "for USB/DC essentials.",
-                s.stormReserveEnabled, { s.stormReserveEnabled = it; changed() },
+                "Storm prep (auto)",
+                "Watches NWS weather alerts for your area and tops the battery to full during a " +
+                "hurricane or tropical-storm watch/warning, then restores your normal charge limit " +
+                "when it clears.",
+                s.stormPrepEnabled, { s.stormPrepEnabled = it; changed(); if (it) onStormEnabled() },
             ) {
-                NumField("Shed AC after", s.stormMinutes, "min") { s.stormMinutes = it; changed() }
+                val hasLoc = s.stormLat != 0f || s.stormLon != 0f
+                val status = when {
+                    s.stormActive -> "Storm alert active — charging to full"
+                    !hasLoc -> "Waiting for location — keep location on and reopen"
+                    else -> "Monitoring your area"
+                }
+                Text(status, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary)
             }
             AutomationCard(
                 "Solar / alternator priority",
