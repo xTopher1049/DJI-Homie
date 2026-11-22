@@ -67,8 +67,16 @@ class DjiPowerService : Service() {
                 delay(20_000)
             }
         }
-        bridge = MqttBridge(this)
+        bridge = MqttBridge(this) { currentJson() }
         scope.launch(Dispatchers.IO) { runCatching { bridge?.start() } }
+        scope.launch {
+            // StateFlow drops identical readings, so an idle station would publish
+            // nothing; re-send the current reading as a heartbeat.
+            while (isActive) {
+                delay(HEARTBEAT_MS)
+                currentJson()?.let { bridge?.publishState(it) }
+            }
+        }
         scope.launch {
             // Switch changes arrive just after the report that carries them, so
             // publish on either so the AC switch state in HA isn't one report stale.
@@ -76,6 +84,9 @@ class DjiPowerService : Service() {
                 .collect { (st, acOn) -> st?.let { bridge?.publishState(stateJson(it, acOn)) } }
         }
     }
+
+    private fun currentJson(): String? =
+        Conn.state.value?.let { st -> stateJson(st, Conn.switches.value.firstOrNull { it.type == 2 }?.on) }
 
     private fun stateJson(s: com.djipower.companion.protocol.PowerState, acOn: Boolean?): String =
         JSONObject().apply {
@@ -157,6 +168,7 @@ class DjiPowerService : Service() {
         private const val NOTIF_ID = 1001
         private const val STORM_POLL_MS = 20 * 60_000L
         private const val STORM_RETRY_MS = 2 * 60_000L
+        private const val HEARTBEAT_MS = 30_000L
 
         fun start(ctx: Context) {
             ContextCompat.startForegroundService(ctx, Intent(ctx, DjiPowerService::class.java))

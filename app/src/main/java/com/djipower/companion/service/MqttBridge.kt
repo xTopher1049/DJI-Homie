@@ -39,7 +39,11 @@ import org.json.JSONObject
  * re-made in [MqttCallbackExtended.connectComplete]. [status] reports what is
  * happening so the settings screen can show it.
  */
-class MqttBridge(private val context: Context) {
+class MqttBridge(
+    private val context: Context,
+    /** Current telemetry JSON, or null with no station data; sent right after (re)connect. */
+    private val snapshot: () -> String? = { null },
+) {
     private var client: MqttAsyncClient? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var connectJob: Job? = null
@@ -72,6 +76,9 @@ class MqttBridge(private val context: Context) {
                 runCatching { c.subscribe("$base/ac/set", 0) }
                 runCatching { c.publish("$base/availability", "online".toByteArray(), 1, true) }
                 runCatching { publishDiscovery(c, base) }
+                // Telemetry that arrived before the connect was dropped, and an idle
+                // station sends nothing new, so push the current reading now.
+                snapshot()?.let { publishState(it) }
                 set("Connected to $host:${s.mqttPort}", Health.CONNECTED)
             }
             override fun connectionLost(cause: Throwable?) {

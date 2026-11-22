@@ -16,6 +16,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -917,7 +921,7 @@ private fun AutomationsScreen(
                 NumField("Port", s.mqttPort, "") { s.mqttPort = it }
                 StrField("Base topic", s.mqttBaseTopic) { s.mqttBaseTopic = it }
                 StrField("Username (optional)", s.mqttUser) { s.mqttUser = it }
-                StrField("Password (optional)", s.mqttPass) { s.mqttPass = it }
+                StrField("Password (optional)", s.mqttPass, password = true) { s.mqttPass = it }
                 MqttIndicator(detailed = true)
                 OutlinedButton(onClick = { changed() }) { Text("Apply") }
                 Text("Adds a \"DJI Power\" device to Home Assistant via MQTT discovery. Publishes " +
@@ -1044,13 +1048,33 @@ private fun NumField(label: String, value: Int, suffix: String, onChange: (Int) 
 }
 
 @Composable
-private fun StrField(label: String, value: String, onChange: (String) -> Unit) {
+private fun StrField(
+    label: String,
+    value: String,
+    password: Boolean = false,
+    onChange: (String) -> Unit,
+) {
     var text by remember(value) { mutableStateOf(value) }
+    var reveal by remember { mutableStateOf(false) }
     OutlinedTextField(
         value = text,
         onValueChange = { text = it; onChange(it) },
         label = { Text(label) },
         singleLine = true,
+        visualTransformation = if (password && !reveal) PasswordVisualTransformation()
+            else VisualTransformation.None,
+        keyboardOptions = if (password) KeyboardOptions(keyboardType = KeyboardType.Password)
+            else KeyboardOptions.Default,
+        trailingIcon = if (password) {
+            {
+                IconButton(onClick = { reveal = !reveal }) {
+                    Icon(
+                        if (reveal) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                        contentDescription = if (reveal) "Hide password" else "Show password",
+                    )
+                }
+            }
+        } else null,
         modifier = Modifier.fillMaxWidth(),
     )
 }
