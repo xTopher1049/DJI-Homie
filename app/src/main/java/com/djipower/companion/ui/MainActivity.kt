@@ -234,6 +234,9 @@ class MainActivity : ComponentActivity() {
                         style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                     Text(status, style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (remember(showAutomations) { AppSettings(this@MainActivity).mqttEnabled }) {
+                        MqttIndicator(detailed = false)
+                    }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -915,9 +918,7 @@ private fun AutomationsScreen(
                 StrField("Base topic", s.mqttBaseTopic) { s.mqttBaseTopic = it }
                 StrField("Username (optional)", s.mqttUser) { s.mqttUser = it }
                 StrField("Password (optional)", s.mqttPass) { s.mqttPass = it }
-                val mqttStatus by MqttBridge.status.collectAsState()
-                Text("Status: $mqttStatus", style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary)
+                MqttIndicator(detailed = true)
                 OutlinedButton(onClick = { changed() }) { Text("Apply") }
                 Text("Adds a \"DJI Power\" device to Home Assistant via MQTT discovery. Publishes " +
                     "${s.mqttBaseTopic.ifBlank { "dji_power" }}/state and …/availability · listens " +
@@ -928,6 +929,51 @@ private fun AutomationsScreen(
             TaskerCard(s)
         }
     }
+}
+
+/**
+ * MQTT bridge health: a coloured dot plus "connected · sent 3s ago". Green when
+ * connected and a publish went out in the last minute, amber while connecting
+ * (or connected but idle, e.g. station out of range), red on an error.
+ * [detailed] adds the full status text (error reason) for the settings card.
+ */
+@Composable
+private fun MqttIndicator(detailed: Boolean) {
+    val health by MqttBridge.health.collectAsState()
+    val text by MqttBridge.status.collectAsState()
+    val lastSent by MqttBridge.lastSent.collectAsState()
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) { now = System.currentTimeMillis(); kotlinx.coroutines.delay(5_000) }
+    }
+    val age = if (lastSent > 0) ((now - lastSent).coerceAtLeast(0) / 1000) else -1
+    val fresh = age in 0..60
+    val (color, label) = when (health) {
+        MqttBridge.Health.CONNECTED ->
+            if (fresh) Color(0xFF2E7D32) to "MQTT connected · sent ${fmtAge(age)} ago"
+            else Color(0xFFF9A825) to (if (age < 0) "MQTT connected · nothing sent yet"
+                else "MQTT connected · last sent ${fmtAge(age)} ago")
+        MqttBridge.Health.CONNECTING -> Color(0xFFF9A825) to "MQTT connecting…"
+        MqttBridge.Health.ERROR -> MaterialTheme.colorScheme.error to "MQTT not connected"
+        MqttBridge.Health.OFF -> MaterialTheme.colorScheme.onSurfaceVariant to "MQTT off (service not running)"
+    }
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Box(Modifier.size(8.dp).background(color, RoundedCornerShape(50)))
+            Text(label, style = MaterialTheme.typography.bodySmall, color = color)
+        }
+        if (detailed && health != MqttBridge.Health.CONNECTED) {
+            Text(text, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+private fun fmtAge(s: Long): String = when {
+    s < 60 -> "${s}s"
+    s < 3600 -> "${s / 60}m"
+    else -> "${s / 3600}h"
 }
 
 /** Shows the shared token Tasker / MacroDroid must send with the SET_AC broadcast. */

@@ -56,15 +56,15 @@ class MqttBridge(private val context: Context) {
         stop()
         val s = AppSettings(context)
         configKey = keyOf(s)
-        if (!s.mqttEnabled) { _status.value = "Off"; return }
+        if (!s.mqttEnabled) { set("Off", Health.OFF); return }
         val host = s.mqttHost.trim()
-        if (host.isEmpty()) { _status.value = "Enter the broker host, then tap Apply"; return }
+        if (host.isEmpty()) { set("Enter the broker host, then tap Apply", Health.ERROR); return }
         val base = base()
         val uri = "tcp://$host:${s.mqttPort}"
         val c = try {
             MqttAsyncClient(uri, "dji-homie-${System.currentTimeMillis()}", MemoryPersistence())
         } catch (e: Exception) {
-            _status.value = "Invalid broker address: ${e.message}"
+            set("Invalid broker address: ${e.message}", Health.ERROR)
             return
         }
         c.setCallback(object : MqttCallbackExtended {
@@ -72,10 +72,10 @@ class MqttBridge(private val context: Context) {
                 runCatching { c.subscribe("$base/ac/set", 0) }
                 runCatching { c.publish("$base/availability", "online".toByteArray(), 1, true) }
                 runCatching { publishDiscovery(c, base) }
-                _status.value = "Connected to $host:${s.mqttPort}"
+                set("Connected to $host:${s.mqttPort}", Health.CONNECTED)
             }
             override fun connectionLost(cause: Throwable?) {
-                _status.value = "Connection lost (${cause?.message ?: "unknown"}); reconnecting"
+                set("Connection lost (${cause?.message ?: "unknown"}); reconnecting", Health.CONNECTING)
             }
             override fun messageArrived(topic: String, message: MqttMessage) {
                 if (topic == "$base/ac/set") {
@@ -99,16 +99,16 @@ class MqttBridge(private val context: Context) {
             }
         }
         client = c
-        _status.value = "Connecting to $host:${s.mqttPort}…"
+        set("Connecting to $host:${s.mqttPort}…", Health.CONNECTING)
         connectJob = scope.launch {
             var backoff = 5_000L
             while (isActive && !c.isConnected) {
                 try {
                     c.connect(opts).waitForCompletion(15_000)
                 } catch (e: MqttException) {
-                    _status.value = "Can't connect: ${describe(e)} — retrying in ${backoff / 1000}s"
+                    set("Can't connect: ${describe(e)} — retrying in ${backoff / 1000}s", Health.ERROR)
                 } catch (e: Exception) {
-                    _status.value = "Can't connect: ${e.message} — retrying in ${backoff / 1000}s"
+                    set("Can't connect: ${e.message} — retrying in ${backoff / 1000}s", Health.ERROR)
                 }
                 if (c.isConnected) break
                 delay(backoff)
@@ -125,6 +125,7 @@ class MqttBridge(private val context: Context) {
                 qos = 0
                 isRetained = true
             })
+            _lastSent.value = System.currentTimeMillis()
         }
     }
 
@@ -142,7 +143,7 @@ class MqttBridge(private val context: Context) {
         }
         runCatching { c.disconnectForcibly(500) }
         runCatching { c.close() }
-        _status.value = "Off"
+        set("Off", Health.OFF)
     }
 
     /** Stop and release the bridge's own coroutine scope (service teardown). */
@@ -206,10 +207,25 @@ class MqttBridge(private val context: Context) {
         }
     }
 
+    enum class Health { OFF, CONNECTING, CONNECTED, ERROR }
+
     companion object {
         private val _status = MutableStateFlow("Off")
         /** Human-readable bridge state for the settings screen. */
         val status: StateFlow<String> = _status.asStateFlow()
+
+        private val _health = MutableStateFlow(Health.OFF)
+        /** Coarse state for the dashboard indicator's colour. */
+        val health: StateFlow<Health> = _health.asStateFlow()
+
+        private val _lastSent = MutableStateFlow(0L)
+        /** Wall-clock ms of the last telemetry publish (0 = none yet). */
+        val lastSent: StateFlow<Long> = _lastSent.asStateFlow()
+
+        private fun set(text: String, h: Health) {
+            _status.value = text
+            _health.value = h
+        }
 
         fun keyOf(s: AppSettings): String =
             listOf(s.mqttEnabled, s.mqttHost.trim(), s.mqttPort, s.mqttUser, s.mqttPass, s.mqttBaseTopic)
