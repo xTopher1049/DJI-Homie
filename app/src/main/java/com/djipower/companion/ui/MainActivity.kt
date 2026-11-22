@@ -557,7 +557,14 @@ class MainActivity : ComponentActivity() {
                         }
                         di.cloudConnected?.let { InfoRow("Station cloud link", if (it) "Connected" else "Offline") }
                         di.accessories.forEach { a ->
-                            InfoRow(a.name, a.firmware ?: "—")
+                            Column(Modifier.fillMaxWidth()) {
+                                Text(a.name, style = MaterialTheme.typography.bodyMedium)
+                                a.firmware?.let {
+                                    Text("Firmware $it",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
                         }
                         Text("DJI Homie itself runs fully locally over Bluetooth. “Station cloud " +
                             "link” shows the station's own dongle connection to DJI's servers, not " +
