@@ -299,7 +299,7 @@ class MainActivity : ComponentActivity() {
                 onDismissRequest = { confirmForget = false },
                 title = { Text("Forget this station?") },
                 text = {
-                    Text("Removes the saved pairing key from this phone and disconnects. " +
+                    Text("Removes the saved pairing key from this device and disconnects. " +
                         "To reconnect you'll sign in to DJI once more to fetch it again.")
                 },
                 confirmButton = {
@@ -553,7 +553,7 @@ class MainActivity : ComponentActivity() {
                             AppSettings(ctx).startOnBoot = it
                         })
                     }
-                    Text("Reconnects to the station and resumes MQTT and automations when the phone " +
+                    Text("Reconnects to the station and resumes MQTT and automations when this device " +
                         "restarts, without opening the app. Only applies while an automation or MQTT is on.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -937,7 +937,7 @@ private fun AutomationsScreen(
             AutomationCard(
                 "MQTT bridge",
                 "Publishes telemetry to a local MQTT broker (Mosquitto / Home Assistant) and accepts " +
-                "AC on/off commands, so a spare phone can bridge BLE to Wi-Fi.",
+                "AC on/off commands, so a spare Android device can bridge BLE to Wi-Fi.",
                 s.mqttEnabled, { s.mqttEnabled = it; changed() },
             ) {
                 StrField("Broker host / IP", s.mqttHost) { s.mqttHost = it }

@@ -243,7 +243,7 @@ class MqttBridge(
             MqttException.REASON_CODE_NOT_AUTHORIZED,
             MqttException.REASON_CODE_FAILED_AUTHENTICATION -> "wrong username or password"
             MqttException.REASON_CODE_SERVER_CONNECT_ERROR ->
-                "broker not reachable (check host, port and that the phone is on the same network)"
+                "broker not reachable (check host, port and that this device is on the same network)"
             MqttException.REASON_CODE_CLIENT_TIMEOUT -> "timed out"
             else -> e.message ?: "error ${e.reasonCode}"
         }
