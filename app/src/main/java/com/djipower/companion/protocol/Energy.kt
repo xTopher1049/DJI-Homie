@@ -10,6 +10,10 @@ data class EnergyConfig(
     val limits: ChargeLimits, val reserve: Reserve?, val acTimeoutSec: Int? = null,
     val energySaverAvailable: Boolean = false, val energySaverMode: String? = null,
     val energySaverModes: List<String> = emptyList(),
+    val stationRules: List<Int>? = null,
+    val carChargers: List<CarCharger> = emptyList(),
+    val carAutoThreshold: Boolean? = null,
+    val schedule: Schedule? = null,
 )
 
 /** One switchable station output (from the 0x0D power-switch snapshot). */

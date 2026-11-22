@@ -477,6 +477,9 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+
+        SchedulePanel(cfg, scope, onError)
+        CarChargerPanel(cfg, scope, onError)
     }
 
     @OptIn(ExperimentalLayoutApi::class)

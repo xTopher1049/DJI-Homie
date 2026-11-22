@@ -14,7 +14,10 @@ import android.os.Handler
 import android.os.Looper
 import com.djipower.companion.protocol.Duml
 import com.djipower.companion.protocol.Energy
+import com.djipower.companion.protocol.Advanced
+import com.djipower.companion.protocol.CarCharger
 import com.djipower.companion.protocol.DeviceInfo
+import com.djipower.companion.protocol.TimePeriod
 import com.djipower.companion.protocol.DeviceInfoParser
 import com.djipower.companion.protocol.EnergyConfig
 import com.djipower.companion.protocol.PortSwitch
@@ -294,6 +297,19 @@ class DjiPowerDevice(
             ),
         )
         applyConfig(decode(resp))
+        // Optional records in their own GET: large car-charger rows can push a combined
+        // reply past the station's size limit, and unsupported keys must not break the
+        // main read. Some models (1000 V2) only report rules in 0x62 pushes.
+        runCatching {
+            val extra = request(
+                Duml.GET_COMMAND,
+                byteArrayOf(
+                    0x00, Advanced.CAR_CHARGERS_KEY.toByte(), 0x10, Advanced.RULES_KEY.toByte(), 0x10,
+                    Advanced.TIME_PERIODS_KEY.toByte(), 0x10,
+                ),
+            )
+            applyConfig(decode(extra))
+        }
     }
 
     /** Parse a keyed-config payload (GET response or 0x62 push) and publish state. */
@@ -304,6 +320,9 @@ class DjiPowerDevice(
         keyed[Energy.POWER_SWITCH_KEY]?.let { rawConfig[Energy.POWER_SWITCH_KEY] = it }
         keyed[Energy.DISPLAY_KEY]?.let { rawConfig[Energy.DISPLAY_KEY] = it }
         keyed[Energy.ECO_KEY]?.let { rawConfig[Energy.ECO_KEY] = it }
+        keyed[Advanced.CAR_CHARGERS_KEY]?.let { rawConfig[Advanced.CAR_CHARGERS_KEY] = it }
+        keyed[Advanced.RULES_KEY]?.let { rawConfig[Advanced.RULES_KEY] = it }
+        keyed[Advanced.TIME_PERIODS_KEY]?.let { rawConfig[Advanced.TIME_PERIODS_KEY] = it }
 
         rawConfig[Energy.POWER_SWITCH_KEY]?.let {
             switchList = Energy.parsePortSwitches(it)
@@ -315,14 +334,27 @@ class DjiPowerDevice(
             val (esAvail, esMode) =
                 rawConfig[Energy.ECO_KEY]?.let { Energy.parseEnergySaver(it) } ?: (false to null)
             val esModes = rawConfig[Energy.ECO_KEY]?.let { Energy.energySaverOptions(it) } ?: emptyList()
-            onConfig(EnergyConfig(limits, reserve, acTimeout, esAvail, esMode, esModes))
+            val rules = rawConfig[Advanced.RULES_KEY]?.let { Advanced.parseRules(it) }
+            val cars = rawConfig[Advanced.CAR_CHARGERS_KEY]?.let { Advanced.parseCarChargers(it) }
+                ?: emptyList()
+            val schedule = Advanced.parseSchedule(
+                rawConfig[Energy.ECO_KEY], rawConfig[Advanced.TIME_PERIODS_KEY],
+            )
+            onConfig(
+                EnergyConfig(
+                    limits, reserve, acTimeout, esAvail, esMode, esModes,
+                    stationRules = rules,
+                    carChargers = cars,
+                    carAutoThreshold = Advanced.autoThreshold(rules),
+                    schedule = schedule,
+                ),
+            )
         }
         if (keyed.keys.any { it == 0x00 || it == 0x01 || it == 0x02 || it == 0x04 || it == 0x0C }) {
             onDeviceInfo(DeviceInfoParser.parse(payload))
         }
     }
 
-    /** Toggle one station output on/off, preserving its row body; then re-read. */
     /** Select an Energy Saver (Energy Optimization) mode on the station. */
     suspend fun setEnergySaverMode(mode: String) {
         val cur = rawConfig[Energy.ECO_KEY]
@@ -332,6 +364,58 @@ class DjiPowerDevice(
         readConfig()
     }
 
+    // ---- Car chargers (0x0A) ----
+    private suspend fun writeCar(c: CarCharger, edit: Pair<Int, ByteArray>) {
+        val snap = rawConfig[Advanced.CAR_CHARGERS_KEY]
+            ?: throw IllegalStateException("car chargers not loaded yet")
+        val v = Advanced.withCarChargerRow(snap, c.index, edit.first, edit.second)
+        request(Duml.SET_COMMAND, buildKeyedSet(listOf(Advanced.CAR_CHARGERS_KEY to v, setRules)))
+        readConfig()
+    }
+
+    suspend fun setCarChargerEnabled(c: CarCharger, on: Boolean) =
+        writeCar(c, Advanced.carEnabledEdit(on))
+
+    suspend fun setCarChargerMode(c: CarCharger, mode: Int) {
+        require(c.enabled) { "Turn the car charger on before changing its mode" }
+        require(mode in 1..3) { "Unknown car-charger mode" }
+        writeCar(c, Advanced.carModeEdit(mode))
+    }
+
+    suspend fun setCarChargerField(c: CarCharger, field: String, raw: Int) {
+        require(c.enabled) { "Turn the car charger on before editing it" }
+        val f = c.fields[field] ?: throw IllegalArgumentException("Unknown car-charger setting")
+        require(f.max > 0 && raw in f.min..f.max) { "Must be within the charger's reported range" }
+        writeCar(c, Advanced.carFieldEdit(field, raw))
+    }
+
+    // ---- Electricity price periods (0x16) + Scheduled Periods controls (0x18) ----
+    suspend fun setTimePeriods(periods: List<TimePeriod>) {
+        Advanced.validatePeriods(periods)?.let { throw IllegalArgumentException(it) }
+        val eco = rawConfig[Energy.ECO_KEY]
+        if (periods.isEmpty() && eco != null && eco.size > 1 && (eco[1].toInt() and 0xFF) !in 0..1) {
+            throw IllegalStateException("Set Energy Saver to Disabled before clearing every period")
+        }
+        val v = Advanced.encodeTimePeriods(periods)
+        request(Duml.SET_COMMAND, buildKeyedSet(listOf(Advanced.TIME_PERIODS_KEY to v, setRules)))
+        readConfig()
+    }
+
+    suspend fun setScheduledSwitch(peakDischarge: Boolean, on: Boolean) {
+        val eco = rawConfig[Energy.ECO_KEY] ?: throw IllegalStateException("energy saver not loaded yet")
+        val v = Advanced.withScheduledSwitch(eco, peakDischarge, on)
+        request(Duml.SET_COMMAND, buildKeyedSet(listOf(Energy.ECO_KEY to v, setRules)))
+        readConfig()
+    }
+
+    suspend fun setOffPeakChargePower(watts: Int) {
+        val eco = rawConfig[Energy.ECO_KEY] ?: throw IllegalStateException("energy saver not loaded yet")
+        val v = Advanced.withOffPeakPower(eco, watts)
+        request(Duml.SET_COMMAND, buildKeyedSet(listOf(Energy.ECO_KEY to v, setRules)))
+        readConfig()
+    }
+
+    /** Toggle one station output on/off, preserving its row body; then re-read. */
     suspend fun setPortSwitch(type: Int, seq: Int, on: Boolean) {
         val snapshot = rawConfig[Energy.POWER_SWITCH_KEY]
             ?: throw IllegalStateException("switch state not loaded yet")
