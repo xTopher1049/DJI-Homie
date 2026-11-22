@@ -21,6 +21,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
@@ -45,6 +47,13 @@ class DjiPowerService : Service() {
         scope.launch {
             combine(Conn.state, Conn.status) { s, st -> s to st }.collect { (s, st) ->
                 nm().notify(NOTIF_ID, notification(s, st))
+            }
+        }
+        val engine = AutomationEngine(this)
+        scope.launch {
+            while (isActive) {
+                runCatching { engine.evaluate() }
+                delay(20_000)
             }
         }
     }

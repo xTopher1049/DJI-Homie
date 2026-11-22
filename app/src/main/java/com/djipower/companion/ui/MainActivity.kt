@@ -2,7 +2,12 @@ package com.djipower.companion.ui
 
 import android.Manifest
 import android.os.Build
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -10,6 +15,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -84,7 +90,7 @@ class MainActivity : ComponentActivity() {
                             onThemeChange = { creds.themeMode = it; themeMode = it },
                             onSignOut = {
                                 creds.clear()
-                                AppSettings(this@MainActivity).serviceEnabled = false
+                                AppSettings(this@MainActivity).clearAll()
                                 DjiPowerService.stop(this@MainActivity)
                                 Conn.stop()
                                 onboarded = false
@@ -101,6 +107,31 @@ class MainActivity : ComponentActivity() {
             arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
         else arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
         permLauncher.launch(perms)
+    }
+
+    /** Start/stop the background service to match the automation gate, prompting
+     *  for the notification permission and a battery-optimisation exemption the
+     *  first time a background automation is switched on. */
+    fun syncServiceAndBattery() {
+        DjiPowerService.sync(this)
+        if (!AppSettings(this).serviceEnabled) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            permLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+        }
+        val pm = getSystemService(PowerManager::class.java)
+        if (pm != null && !pm.isIgnoringBatteryOptimizations(packageName)) {
+            runCatching {
+                startActivity(
+                    Intent(
+                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        Uri.parse("package:$packageName"),
+                    ),
+                )
+            }
+        }
     }
 
     @Composable
@@ -125,20 +156,29 @@ class MainActivity : ComponentActivity() {
         var confirmForget by remember { mutableStateOf(false) }
         var showSettings by remember { mutableStateOf(false) }
         var showUpsConfig by remember { mutableStateOf(false) }
+        var showAutomations by remember { mutableStateOf(false) }
 
         LaunchedEffect(Unit) { Conn.start(this@MainActivity) }
         LaunchedEffect(tab) { if (tab == 1) runCatching { Conn.device?.readConfig() } }
 
         // System back gesture closes an open menu instead of exiting.
-        BackHandler(enabled = showSettings) { showSettings = false }
+        BackHandler(enabled = showSettings || showAutomations) {
+            if (showAutomations) showAutomations = false else showSettings = false
+        }
 
-        if (showSettings) {
+        if (showAutomations) {
+            AutomationsScreen(
+                onBack = { showAutomations = false },
+                onChanged = { syncServiceAndBattery() },
+            )
+        } else if (showSettings) {
             SettingsScreen(
                 themeMode = themeMode,
                 onThemeChange = onThemeChange,
                 deviceInfo = deviceInfo,
                 scope = scope,
                 onError = { Conn.postStatus(it) },
+                onOpenAutomations = { showSettings = false; showAutomations = true },
                 onForget = { confirmForget = true },
                 onBack = { showSettings = false },
             )
@@ -396,6 +436,7 @@ class MainActivity : ComponentActivity() {
         deviceInfo: DeviceInfo?,
         scope: CoroutineScope,
         onError: (String) -> Unit,
+        onOpenAutomations: () -> Unit,
         onForget: () -> Unit,
         onBack: () -> Unit,
     ) {
@@ -425,6 +466,12 @@ class MainActivity : ComponentActivity() {
                                 Text(label)
                             }
                         }
+                }
+            }
+
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    SettingRow("Automations", "Set up \u203A") { onOpenAutomations() }
                 }
             }
 
@@ -708,6 +755,106 @@ private fun SettingRow(label: String, value: String, onClick: () -> Unit) {
         Text(label)
         Text(value, color = MaterialTheme.colorScheme.primary)
     }
+}
+
+@Composable
+private fun AutomationsScreen(onBack: () -> Unit, onChanged: () -> Unit) {
+    val context = LocalContext.current
+    val s = remember { AppSettings(context) }
+    var rev by remember { mutableStateOf(0) }
+    fun changed() { rev++; onChanged() }
+
+    Column(
+        Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+            }
+            Text("Automations", style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold)
+        }
+        Text("These run in the background with a persistent notification. Turning any on " +
+            "keeps a low-power connection alive; turning them all off stops it.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+        key(rev) {
+            AutomationCard(
+                "Zero-load AC cutoff",
+                "Switches the AC inverter off when it idles below a set load, to stop parasitic drain.",
+                s.zeroLoadEnabled, { s.zeroLoadEnabled = it; changed() },
+            ) {
+                NumField("Load under", s.zeroLoadThresholdW, "W") { s.zeroLoadThresholdW = it; changed() }
+                NumField("For at least", s.zeroLoadMinutes, "min") { s.zeroLoadMinutes = it; changed() }
+            }
+            AutomationCard(
+                "Reserve cutoff",
+                "Switches AC off at a battery floor so USB/DC stays available for essentials.",
+                s.socCutoffEnabled, { s.socCutoffEnabled = it; changed() },
+            ) {
+                NumField("Battery floor", s.socCutoffPercent, "%") { s.socCutoffPercent = it; changed() }
+            }
+            AutomationCard(
+                "AC duty cycle",
+                "Runs AC on a repeating on/off schedule to stretch runtime for intermittent loads.",
+                s.dutyCycleEnabled, { s.dutyCycleEnabled = it; changed() },
+            ) {
+                NumField("AC on for", s.dutyOnMin, "min") { s.dutyOnMin = it; changed() }
+                NumField("Every", s.dutyPeriodMin, "min") { s.dutyPeriodMin = it; changed() }
+            }
+            AutomationCard(
+                "Idle power-down",
+                "Powers the whole station off when input and output are both zero for the set time. " +
+                "You'll need to press the station's power button to turn it back on.",
+                s.idlePowerDownEnabled, { s.idlePowerDownEnabled = it; changed() },
+            ) {
+                NumField("Idle for", s.idleMinutes, "min") { s.idleMinutes = it; changed() }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AutomationCard(
+    title: String,
+    desc: String,
+    enabled: Boolean,
+    onEnabled: (Boolean) -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically) {
+                Text(title, style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Switch(checked = enabled, onCheckedChange = onEnabled)
+            }
+            Text(desc, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (enabled) content()
+        }
+    }
+}
+
+@Composable
+private fun NumField(label: String, value: Int, suffix: String, onChange: (Int) -> Unit) {
+    var text by remember(value) { mutableStateOf(value.toString()) }
+    OutlinedTextField(
+        value = text,
+        onValueChange = { v ->
+            text = v.filter { it.isDigit() }
+            text.toIntOrNull()?.let(onChange)
+        },
+        label = { Text(label) },
+        suffix = { Text(suffix) },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        modifier = Modifier.fillMaxWidth(),
+    )
 }
 
 private fun hhmmss(t: Long): String =
