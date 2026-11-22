@@ -38,9 +38,22 @@ class AppSettings(context: Context) {
     var dutyPeriodMin: Int
         get() = i("duty_period_min", 60); set(v) = setI("duty_period_min", v)
 
+    // --- Storm / outage reserve (shed AC after charging input is lost) ---
+    var stormReserveEnabled: Boolean
+        get() = b("storm_on", false); set(v) = setB("storm_on", v)
+    var stormMinutes: Int
+        get() = i("storm_min", 5); set(v) = setI("storm_min", v)
+
+    // --- Solar / alternator priority (AC on only while input exceeds threshold) ---
+    var solarPriorityEnabled: Boolean
+        get() = b("solar_on", false); set(v) = setB("solar_on", v)
+    var solarThresholdW: Int
+        get() = i("solar_w", 200); set(v) = setI("solar_w", v)
+
     /** True when any automation that needs the always-on service is enabled. */
     val serviceEnabled: Boolean
-        get() = zeroLoadEnabled || socCutoffEnabled || dutyCycleEnabled
+        get() = zeroLoadEnabled || socCutoffEnabled || dutyCycleEnabled ||
+            stormReserveEnabled || solarPriorityEnabled
 
     fun clearAll() = prefs.edit().clear().apply()
 }

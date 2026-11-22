@@ -555,6 +555,12 @@ class MainActivity : ComponentActivity() {
                                 "the value re-reads after saving so you'll see what it kept.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (!isScreen) {
+                                Text("If the station has already been idle longer than this, it " +
+                                    "powers off right away.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     },
                     confirmButton = {
@@ -801,6 +807,22 @@ private fun AutomationsScreen(onBack: () -> Unit, onChanged: () -> Unit) {
             ) {
                 NumField("AC on for", s.dutyOnMin, "min") { s.dutyOnMin = it; changed() }
                 NumField("Every", s.dutyPeriodMin, "min") { s.dutyPeriodMin = it; changed() }
+            }
+            AutomationCard(
+                "Storm / outage reserve",
+                "After charging input is lost (grid down), sheds AC output to preserve battery " +
+                "for USB/DC essentials.",
+                s.stormReserveEnabled, { s.stormReserveEnabled = it; changed() },
+            ) {
+                NumField("Shed AC after", s.stormMinutes, "min") { s.stormMinutes = it; changed() }
+            }
+            AutomationCard(
+                "Solar / alternator priority",
+                "Runs AC only while charge input exceeds a threshold, so AC follows the sun or the " +
+                "engine instead of draining the battery.",
+                s.solarPriorityEnabled, { s.solarPriorityEnabled = it; changed() },
+            ) {
+                NumField("Input above", s.solarThresholdW, "W") { s.solarThresholdW = it; changed() }
             }
         }
     }
