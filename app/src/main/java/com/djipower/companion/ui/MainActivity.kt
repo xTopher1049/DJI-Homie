@@ -695,6 +695,11 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         Conn.uiActive = true
+        // Belt and braces: if the service should be running but isn't (killed by
+        // an update, the OS, or a force-stop), opening the app brings it back.
+        if (CredStore(this).isOnboarded && AppSettings(this).serviceEnabled) {
+            DjiPowerService.start(this)
+        }
     }
 
     override fun onStop() {

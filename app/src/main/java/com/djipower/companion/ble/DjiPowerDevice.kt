@@ -275,7 +275,7 @@ class DjiPowerDevice(
                 val result = decode(request(Duml.AUTH_COMMAND, material))
                 when (result.getOrNull(0)?.toInt() ?: -1) {
                     0x00 -> {
-                        authenticated = true; onEvent("Locally authenticated")
+                        authenticated = true; onEvent("Bluetooth Connected")
                         runCatching { readConfig() }
                         rssiHandler.post(rssiRunnable)
                         return@runBlocking
