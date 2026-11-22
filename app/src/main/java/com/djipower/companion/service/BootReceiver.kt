@@ -18,7 +18,11 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED &&
             intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
-        if (CredStore(context).isOnboarded && AppSettings(context).serviceEnabled) {
+        val s = AppSettings(context)
+        // The update restart resumes a service that was already running; only the
+        // boot start is the user's "Start on boot" choice.
+        if (intent.action == Intent.ACTION_BOOT_COMPLETED && !s.startOnBoot) return
+        if (CredStore(context).isOnboarded && s.serviceEnabled) {
             DjiPowerService.start(context)
         }
     }

@@ -192,9 +192,11 @@ object MqttEntities {
         sensor("input_power", "Input power", "{{ value_json.in_w }}", "W", "power")
         sensor("ac_power", "AC output power", "{{ value_json.ac_w }}", "W", "power")
         sensor("dc_power", "DC output power", "{{ value_json.dc_w }}", "W", "power")
-        sensor("runtime", "Runtime", "{{ value_json.runtime_min }}", "min", "duration")
+        // The station reports time-to-full while charging and time-to-empty otherwise.
+        sensor("runtime", "Time remaining", "{{ value_json.runtime_min }}", "min", "duration")
         add("binary_sensor", common("charging", "Charging", stateT).apply {
-            put("value_template", "{{ 'ON' if value_json.charging else 'OFF' }}")
+            // Unknown (null) must stay unknown, not read as "Not charging".
+            put("value_template", boolTpl("charging"))
             put("device_class", "battery_charging")
         })
         add("switch", common("ac", "AC output", stateT).apply {

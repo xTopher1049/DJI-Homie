@@ -117,6 +117,7 @@ class DjiPowerService : Service() {
             put("dc_w", s.dcOutputW)
             put("runtime_min", s.runtimeMin ?: JSONObject.NULL)
             put("charging", s.charging ?: JSONObject.NULL)
+            put("charge_state_raw", s.chargeStateRaw ?: JSONObject.NULL)
         }.toString()
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

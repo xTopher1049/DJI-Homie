@@ -74,6 +74,11 @@ class AppSettings(context: Context) {
     var mqttBaseTopic: String
         get() = str("mqtt_topic", "dji_power"); set(v) = setStr("mqtt_topic", v)
 
+    /** Start the background service when the phone boots (only matters while an
+     *  automation or MQTT is on). On by default, matching the previous behaviour. */
+    var startOnBoot: Boolean
+        get() = b("start_on_boot", true); set(v) = setB("start_on_boot", v)
+
     /** Shared secret Tasker / MacroDroid must send as the "token" extra with
      *  SET_AC, so other installed apps can't drive the station. Generated once. */
     val commandToken: String

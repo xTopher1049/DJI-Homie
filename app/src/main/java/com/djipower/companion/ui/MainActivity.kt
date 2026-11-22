@@ -540,6 +540,26 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            val ctx = LocalContext.current
+            var startOnBoot by remember { mutableStateOf(AppSettings(ctx).startOnBoot) }
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text("Start on boot", style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                        Switch(checked = startOnBoot, onCheckedChange = {
+                            startOnBoot = it
+                            AppSettings(ctx).startOnBoot = it
+                        })
+                    }
+                    Text("Reconnects to the station and resumes MQTT and automations when the phone " +
+                        "restarts, without opening the app. Only applies while an automation or MQTT is on.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+
             var picker by remember { mutableStateOf<String?>(null) }
             val screenOpts = com.djipower.companion.protocol.Energy.SCREEN_TIMEOUT_OPTIONS
             val deviceOpts = com.djipower.companion.protocol.Energy.DEVICE_TIMEOUT_OPTIONS

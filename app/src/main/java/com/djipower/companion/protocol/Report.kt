@@ -19,6 +19,8 @@ data class PowerState(
     val chargeInputW: Int = 0,
     val charging: Boolean? = null,
     val ports: List<PortPower> = emptyList(),
+    /** Raw battery-state byte (0x3020[12]); 1 recharging, 2 discharging, others unmapped. */
+    val chargeStateRaw: Int? = null,
 )
 
 /** One active port from a telemetry report: identity + live watts. */
@@ -40,6 +42,22 @@ object Report {
         val v = le16(b, i)
         return if (v >= 0x8000) v - 0x10000 else v
     }
+
+    /**
+     * Fallback when the battery-state byte is missing or holds a value we haven't
+     * mapped (seen while solar-charging with no load): judge by net power flow.
+     * Within ±[FLOW_DEADBAND_W] it's genuinely idle, so stay unknown.
+     */
+    fun chargingFromFlow(inputW: Int?, outputW: Int?): Boolean? {
+        if (inputW == null || outputW == null) return null
+        return when {
+            inputW - outputW > FLOW_DEADBAND_W -> true
+            outputW - inputW > FLOW_DEADBAND_W -> false
+            else -> null
+        }
+    }
+
+    private const val FLOW_DEADBAND_W = 10
 
     fun parseTlvs(data: ByteArray): List<Tlv> {
         val out = ArrayList<Tlv>()
@@ -71,6 +89,7 @@ object Report {
         var runtimeMin: Int? = null
         var temperatureC: Double? = null
         var charging: Boolean? = null
+        var chargeStateRaw: Int? = null
 
         records(top, 0x3020).firstOrNull()?.let { battery ->
             if (battery.size >= 9) {
@@ -81,7 +100,8 @@ object Report {
                 temperatureC = le16s(battery, 9) / 100.0
             }
             if (battery.size >= 13) {
-                charging = when (battery[12].toInt() and 0xFF) {
+                chargeStateRaw = battery[12].toInt() and 0xFF
+                charging = when (chargeStateRaw) {
                     1 -> true   // recharging
                     2 -> false  // discharging
                     else -> null
@@ -137,8 +157,9 @@ object Report {
             acOutputW = groupOutput[2] ?: 0,
             dcOutputW = groupOutput[3] ?: 0,
             chargeInputW = groupInput[1] ?: 0,
-            charging = charging,
+            charging = charging ?: chargingFromFlow(inputW, outputW),
             ports = ports,
+            chargeStateRaw = chargeStateRaw,
         )
     }
 }

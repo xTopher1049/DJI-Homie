@@ -154,3 +154,12 @@ class AdvancedTest {
         assertEquals(true, Advanced.autoThreshold(Advanced.parseRules(v)))
     }
 }
+
+class ReportTest {
+    @Test fun chargingFallsBackToPowerFlow() {
+        assertEquals(true, Report.chargingFromFlow(614, 0))
+        assertEquals(false, Report.chargingFromFlow(0, 300))
+        assertNull(Report.chargingFromFlow(5, 0))      // inside deadband: idle
+        assertNull(Report.chargingFromFlow(null, 0))
+    }
+}
