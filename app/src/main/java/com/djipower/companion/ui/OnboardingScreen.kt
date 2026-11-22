@@ -187,7 +187,10 @@ fun OnboardingScreen(credStore: CredStore, scanner: DeviceScanner, onDone: () ->
                     enabled = chosenDevice != null && mac.matches(Regex("(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}")),
                     onClick = {
                         val d = chosenDevice!!
-                        credStore.save(mac.trim(), d.pairKey, d.name)
+                        val model = scanResults
+                            .firstOrNull { it.address.equals(mac.trim(), ignoreCase = true) }
+                            ?.model ?: com.djipower.companion.protocol.Models.DEFAULT
+                        credStore.save(mac.trim(), d.pairKey, d.name, model)
                         onDone()
                     }, modifier = Modifier.fillMaxWidth()
                 ) { Text("Save & continue") }

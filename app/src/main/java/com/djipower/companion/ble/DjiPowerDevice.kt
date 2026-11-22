@@ -9,10 +9,10 @@ import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.content.Context
+import com.djipower.companion.protocol.Models
 import android.os.Handler
 import android.os.Looper
-import com.djipower.companion.protocol.Duml
-import com.djipower.companion.protocol.Energy
+XYZimport com.djipower.companion.protocol.Energy
 import com.djipower.companion.protocol.DeviceInfo
 import com.djipower.companion.protocol.DeviceInfoParser
 import com.djipower.companion.protocol.EnergyConfig
@@ -37,7 +37,7 @@ class DjiPowerDevice(
     private val context: Context,
     private val address: String,
     pairKeyHex: String,
-    private val encryptedTransport: Boolean = true, // true for the original Power 1000
+    private val model: String = Models.DEFAULT,
     private val onState: (PowerState) -> Unit = {},
     private val onEvent: (String) -> Unit = {},
     private val onConfig: (EnergyConfig) -> Unit = {},
@@ -47,6 +47,7 @@ class DjiPowerDevice(
     private val onHms: (ByteArray) -> Unit = {},
 ) {
     private val pairKey = Duml.normalizePairKey(pairKeyHex)
+    private val encryptedTransport = Models.isEncrypted(model)
     private val stream = Duml.Stream()
     private var gatt: BluetoothGatt? = null
     @Volatile private var shouldReconnect = false

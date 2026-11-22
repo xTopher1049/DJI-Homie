@@ -66,7 +66,7 @@ object Conn {
         val hist = history(app)
         _status.value = "Connecting…"
         device = DjiPowerDevice(
-            context = app, address = mac, pairKeyHex = key,
+            context = app, address = mac, pairKeyHex = key, model = creds.model,
             onState = { s ->
                 _state.value = s
                 if (hist.record(s.batteryPercent?.toFloat(), s.outputW, s.inputW))

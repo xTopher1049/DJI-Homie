@@ -8,6 +8,7 @@ import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import com.djipower.companion.protocol.Models
 
 /**
  * Scans for nearby DJI Power stations so onboarding can capture the BLE MAC.
@@ -17,7 +18,7 @@ import android.os.Looper
 @SuppressLint("MissingPermission")
 class DeviceScanner(private val context: Context) {
 
-    data class Found(val name: String, val address: String)
+    data class Found(val name: String, val address: String, val model: String?)
 
     private var callback: ScanCallback? = null
     private val seen = LinkedHashMap<String, Found>()
@@ -34,7 +35,9 @@ class DeviceScanner(private val context: Context) {
                 if (!name.contains("DJI", ignoreCase = true) &&
                     !name.contains("Power", ignoreCase = true)) return
                 val addr = result.device.address
-                if (seen.put(addr, Found(name, addr)) == null) onUpdate(seen.values.toList())
+                val mfr = result.scanRecord?.getManufacturerSpecificData(Models.MANUFACTURER_ID)
+                val model = Models.fromManufacturerData(mfr) ?: Models.fromName(name)
+                if (seen.put(addr, Found(name, addr, model)) == null) onUpdate(seen.values.toList())
             }
         }
         callback = cb
