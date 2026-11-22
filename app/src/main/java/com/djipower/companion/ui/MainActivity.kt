@@ -53,6 +53,7 @@ import com.djipower.companion.data.Conn
 import com.djipower.companion.data.CredStore
 import com.djipower.companion.data.HistoryStore
 import com.djipower.companion.service.DjiPowerService
+import com.djipower.companion.service.MqttBridge
 import com.djipower.companion.protocol.DeviceInfo
 import com.djipower.companion.protocol.EnergyConfig
 import com.djipower.companion.protocol.PortSwitch
@@ -914,8 +915,13 @@ private fun AutomationsScreen(
                 StrField("Base topic", s.mqttBaseTopic) { s.mqttBaseTopic = it }
                 StrField("Username (optional)", s.mqttUser) { s.mqttUser = it }
                 StrField("Password (optional)", s.mqttPass) { s.mqttPass = it }
-                Text("Publishes ${s.mqttBaseTopic.ifBlank { "dji_power" }}/state and …/availability · " +
-                    "listens …/ac/set (on/off). Toggle off and on to apply changes.",
+                val mqttStatus by MqttBridge.status.collectAsState()
+                Text("Status: $mqttStatus", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary)
+                OutlinedButton(onClick = { changed() }) { Text("Apply") }
+                Text("Adds a \"DJI Power\" device to Home Assistant via MQTT discovery. Publishes " +
+                    "${s.mqttBaseTopic.ifBlank { "dji_power" }}/state and …/availability · listens " +
+                    "…/ac/set (on/off).",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }

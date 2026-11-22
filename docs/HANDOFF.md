@@ -26,6 +26,7 @@ CI: GitHub Actions builds the APK on every push. Owner pushes with `push.bat` (l
 - Storm prep only flips `stormActive` after the station accepts the write; a failed write is retried in ~2 min.
 - Tasker `SET_AC` broadcasts need the `token` extra (shown in the Automations tab).
 - MQTT: retries the first connect with backoff, re-subscribes on every reconnect, publishes retained `<base>/availability` (online/offline, also the LWT).
+- MQTT: publishes HA discovery configs (`homeassistant/<component>/<node>_<id>/config`, retained) for battery/power/runtime sensors, a charging binary_sensor and an AC switch; state JSON carries `ac_on`. The service rebuilds the client in `onStartCommand` when MQTT settings change (Apply button); `MqttBridge.status` drives the status line.
 - Unit tests for the pure protocol layer live in `app/src/test`; CI runs `testDebugUnitTest` before `assembleDebug`.
 
 ## Owner decisions

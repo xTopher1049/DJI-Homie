@@ -70,12 +70,16 @@ class DjiPowerService : Service() {
         bridge = MqttBridge(this)
         scope.launch(Dispatchers.IO) { runCatching { bridge?.start() } }
         scope.launch {
-            Conn.state.collect { st -> st?.let { bridge?.publishState(stateJson(it)) } }
+            // Switch changes arrive just after the report that carries them, so
+            // publish on either so the AC switch state in HA isn't one report stale.
+            combine(Conn.state, Conn.switches) { st, sw -> st to sw.firstOrNull { it.type == 2 }?.on }
+                .collect { (st, acOn) -> st?.let { bridge?.publishState(stateJson(it, acOn)) } }
         }
     }
 
-    private fun stateJson(s: com.djipower.companion.protocol.PowerState): String =
+    private fun stateJson(s: com.djipower.companion.protocol.PowerState, acOn: Boolean?): String =
         JSONObject().apply {
+            put("ac_on", acOn ?: JSONObject.NULL)
             put("battery", s.batteryPercent ?: JSONObject.NULL)
             put("out_w", s.outputW ?: 0)
             put("in_w", s.inputW ?: 0)
@@ -87,6 +91,12 @@ class DjiPowerService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Conn.start(this)
+        // Settings screen re-syncs the service after edits; rebuild the MQTT client
+        // only if its settings actually changed.
+        val b = bridge
+        if (b != null && b.configKey != null && b.configKey != MqttBridge.keyOf(AppSettings(this))) {
+            scope.launch(Dispatchers.IO) { runCatching { b.start() } }
+        }
         return START_STICKY
     }
 
