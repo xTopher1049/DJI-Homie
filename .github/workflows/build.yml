@@ -34,11 +34,22 @@ jobs:
       - name: Generate Gradle wrapper
         run: gradle wrapper --gradle-version 8.7
 
+      # Releases take their version from the tag (v0.2.0 -> 0.2.0); every other
+      # build is 0.2.<run>. Bump the prefix here when starting a new minor line.
+      - name: Set version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            V="${GITHUB_REF_NAME#v}"
+          else
+            V="0.2.${{ github.run_number }}"
+          fi
+          echo "VERSION_NAME=$V" >> "$GITHUB_ENV"
+          echo "Version: $V"
+
       - name: Build debug APK
         run: ./gradlew testDebugUnitTest assembleDebug --stacktrace
         env:
           VERSION_CODE: ${{ github.run_number }}
-          VERSION_NAME: 0.1.${{ github.run_number }}
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
