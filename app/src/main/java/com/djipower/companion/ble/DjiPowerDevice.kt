@@ -44,6 +44,7 @@ class DjiPowerDevice(
     private val onSwitches: (List<PortSwitch>) -> Unit = {},
     private val onRssi: (Int) -> Unit = {},
     private val onDeviceInfo: (DeviceInfo) -> Unit = {},
+    private val onHms: (ByteArray) -> Unit = {},
 ) {
     private val pairKey = Duml.normalizePairKey(pairKeyHex)
     private val stream = Duml.Stream()
@@ -154,6 +155,9 @@ class DjiPowerDevice(
             }
             if (packet.commandId == 0x62) {
                 try { applyConfig(payload) } catch (_: Exception) {}
+            }
+            if (packet.commandId == Duml.HMS_COMMAND) {
+                onHms(payload)
             }
         }
     }

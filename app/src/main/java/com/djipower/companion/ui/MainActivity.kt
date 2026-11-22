@@ -37,6 +37,7 @@ import com.djipower.companion.ble.DjiPowerDevice
 import com.djipower.companion.data.CredStore
 import com.djipower.companion.data.HistoryStore
 import com.djipower.companion.protocol.DeviceInfo
+import com.djipower.companion.protocol.Duml
 import com.djipower.companion.protocol.EnergyConfig
 import com.djipower.companion.protocol.PortSwitch
 import com.djipower.companion.protocol.PowerState
@@ -111,6 +112,7 @@ class MainActivity : ComponentActivity() {
         var showUpsConfig by remember { mutableStateOf(false) }
         var deviceInfo by remember { mutableStateOf<DeviceInfo?>(null) }
         var samples by remember { mutableStateOf(history.recent()) }
+        var alarms by remember { mutableStateOf<List<Pair<Long, String>>>(emptyList()) }
 
         LaunchedEffect(Unit) {
             val mac = creds.mac ?: return@LaunchedEffect
@@ -130,6 +132,9 @@ class MainActivity : ComponentActivity() {
                 onSwitches = { sw -> runOnUiThread { switches = sw } },
                 onRssi = { r -> runOnUiThread { rssi = r } },
                 onDeviceInfo = { di -> runOnUiThread { deviceInfo = di } },
+                onHms = { b -> runOnUiThread {
+                    alarms = (alarms + (System.currentTimeMillis() to Duml.bytesToHex(b))).takeLast(50)
+                } },
             ).also { it.connect() }
         }
         LaunchedEffect(tab) { if (tab == 1) runCatching { device?.readConfig() } }
@@ -177,7 +182,7 @@ class MainActivity : ComponentActivity() {
             }
 
             when (tab) {
-                0 -> StatusTab(state, switches, scope, onAcConfig = { showUpsConfig = true }) { status = it }
+                0 -> StatusTab(state, switches, alarms, scope, onAcConfig = { showUpsConfig = true }) { status = it }
                 1 -> EnergyPanel(energy, scope) { status = it }
                 else -> HistoryTab(samples)
             }
@@ -233,7 +238,7 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun StatusTab(
-        state: PowerState?, switches: List<PortSwitch>,
+        state: PowerState?, switches: List<PortSwitch>, alarms: List<Pair<Long, String>>,
         scope: CoroutineScope, onAcConfig: () -> Unit, onError: (String) -> Unit,
     ) {
         val s = state ?: run {
@@ -275,6 +280,29 @@ class MainActivity : ComponentActivity() {
         s.ports.filter { (it.type to it.seq) !in switchKeys }.forEach { pp ->
             PortCard(pp.label, portIcon(pp.type), portDetail(pp.outputW, pp.inputW, pp.on),
                 checked = null, onToggle = null)
+        }
+
+        if (alarms.isNotEmpty()) {
+            Card(
+                Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                ),
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("HMS health alarms", style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onErrorContainer)
+                    Text("Raw health/fault frames from the station (codes not yet decoded).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer)
+                    alarms.takeLast(8).reversed().forEach { (t, hex) ->
+                        Text("${hhmmss(t)}  ${hex.take(56)}${if (hex.length > 56) "…" else ""}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer)
+                    }
+                }
+            }
         }
     }
 
@@ -546,6 +574,9 @@ private fun InfoRow(label: String, value: String) {
         Text(value)
     }
 }
+
+private fun hhmmss(t: Long): String =
+    java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(t))
 
 private fun fmtTimeout(s: Int): String = when {
     s == 0 -> "Never"
