@@ -27,6 +27,12 @@ object Energy {
     const val ECO_KEY = 0x18
     const val RESERVE_MARGIN = 5
 
+    /** Screen / device auto-off choices DJI Home offers (seconds to label). */
+    val SCREEN_TIMEOUT_OPTIONS = listOf(0 to "Never", 60 to "1 min", 300 to "5 min",
+        900 to "15 min", 1800 to "30 min")
+    val DEVICE_TIMEOUT_OPTIONS = listOf(0 to "Never", 60 to "1 min", 3600 to "1 hour", 21600 to "6 hours",
+        43200 to "12 hours", 86400 to "24 hours")
+
     private fun u16(b: ByteArray, i: Int) =
         (b[i].toInt() and 0xFF) or ((b[i + 1].toInt() and 0xFF) shl 8)
 

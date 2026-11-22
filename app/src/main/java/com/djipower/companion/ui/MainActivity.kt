@@ -541,10 +541,8 @@ class MainActivity : ComponentActivity() {
             }
 
             var picker by remember { mutableStateOf<String?>(null) }
-            val screenOpts = listOf(0 to "Never", 60 to "1 min", 300 to "5 min",
-                900 to "15 min", 1800 to "30 min")
-            val deviceOpts = listOf(0 to "Never", 60 to "1 min", 3600 to "1 hour", 21600 to "6 hours",
-                43200 to "12 hours", 86400 to "24 hours")
+            val screenOpts = com.djipower.companion.protocol.Energy.SCREEN_TIMEOUT_OPTIONS
+            val deviceOpts = com.djipower.companion.protocol.Energy.DEVICE_TIMEOUT_OPTIONS
 
             deviceInfo?.let { di ->
                 Card(Modifier.fillMaxWidth()) {

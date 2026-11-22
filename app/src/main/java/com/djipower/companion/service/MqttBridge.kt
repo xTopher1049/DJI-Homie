@@ -3,7 +3,6 @@ package com.djipower.companion.service
 import android.content.Context
 import com.djipower.companion.data.AppSettings
 import com.djipower.companion.data.Conn
-import com.djipower.companion.data.CredStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -22,7 +21,6 @@ import org.eclipse.paho.client.mqttv3.MqttConnectOptions
 import org.eclipse.paho.client.mqttv3.MqttException
 import org.eclipse.paho.client.mqttv3.MqttMessage
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
-import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -73,9 +71,11 @@ class MqttBridge(
         }
         c.setCallback(object : MqttCallbackExtended {
             override fun connectComplete(reconnect: Boolean, serverURI: String?) {
-                runCatching { c.subscribe("$base/ac/set", 0) }
+                runCatching { c.subscribe(arrayOf("$base/ac/set", "$base/set/+"), intArrayOf(0, 0)) }
                 runCatching { c.publish("$base/availability", "online".toByteArray(), 1, true) }
-                runCatching { publishDiscovery(c, base) }
+                synchronized(discoveryLock) { published.clear() }
+                refreshDiscovery()
+                publishSettings()
                 // Telemetry that arrived before the connect was dropped, and an idle
                 // station sends nothing new, so push the current reading now.
                 snapshot()?.let { publishState(it) }
@@ -91,6 +91,15 @@ class MqttBridge(
                     CoroutineScope(Dispatchers.Main).launch {
                         runCatching { device.setAcOutput(on) }
                     }
+                } else if (topic.startsWith("$base/set/")) {
+                    val id = topic.removePrefix("$base/set/")
+                    val payload = message.toString()
+                    CoroutineScope(Dispatchers.Main).launch {
+                        runCatching { MqttEntities.handle(context, id, payload) }
+                            .onFailure { Conn.postStatus("MQTT $id: ${it.message}") }
+                        // Echo the real state so HA snaps back after a rejected command.
+                        scope.launch { publishSettings() }
+                    }
                 }
             }
             override fun deliveryComplete(token: IMqttDeliveryToken?) {}
@@ -99,6 +108,8 @@ class MqttBridge(
             isAutomaticReconnect = true
             isCleanSession = true
             connectionTimeout = 10
+            // Discovery sends ~40 retained configs at once; Paho's default window is 10.
+            maxInflight = 200
             setWill("$base/availability", "offline".toByteArray(), 1, true)
             if (s.mqttUser.isNotBlank()) {
                 userName = s.mqttUser
@@ -159,59 +170,49 @@ class MqttBridge(
         scope.cancel()
     }
 
-    // ---- Home Assistant MQTT discovery ---------------------------------------
+    // ---- Home Assistant MQTT discovery + settings -----------------------------
 
-    private fun publishDiscovery(c: MqttAsyncClient, base: String) {
-        val node = base.replace(Regex("[^A-Za-z0-9_-]"), "_")
-        val creds = CredStore(context)
-        val device = JSONObject().apply {
-            put("identifiers", JSONArray().put("dji_homie_$node"))
-            put("name", creds.stationName?.takeIf { it.isNotBlank() } ?: "DJI Power")
-            put("manufacturer", "DJI")
-            put("model", creds.model)
-        }
-        fun common(id: String, name: String) = JSONObject().apply {
-            put("name", name)
-            put("unique_id", "${node}_$id")
-            put("state_topic", "$base/state")
-            put("availability_topic", "$base/availability")
-            put("device", device)
-        }
-        fun sensor(id: String, name: String, tpl: String, unit: String?, cls: String?) =
-            common(id, name).apply {
-                put("value_template", tpl)
-                unit?.let { put("unit_of_measurement", it) }
-                cls?.let { put("device_class", it) }
-                put("state_class", "measurement")
+    private val discoveryLock = Any()
+    /** Discovery topics published this session -> payload, to send only changes
+     *  and to remove entities (empty retained payload) the station no longer has. */
+    private val published = HashMap<String, String>()
+
+    /** Publish discovery for entities that appeared or changed; remove vanished ones. */
+    fun refreshDiscovery() {
+        val c = client ?: return
+        if (!c.isConnected) return
+        val next = runCatching { MqttEntities.discovery(context, base()) }.getOrNull() ?: return
+        synchronized(discoveryLock) {
+            for ((topic, payload) in next) {
+                if (published[topic] != payload) {
+                    val ok = runCatching { c.publish(topic, payload.toByteArray(), 1, true) }.isSuccess
+                    if (ok) published[topic] = payload
+                }
             }
-
-        val configs = listOf(
-            "sensor" to sensor("battery", "Battery", "{{ value_json.battery }}", "%", "battery"),
-            "sensor" to sensor("output_power", "Output power", "{{ value_json.out_w }}", "W", "power"),
-            "sensor" to sensor("input_power", "Input power", "{{ value_json.in_w }}", "W", "power"),
-            "sensor" to sensor("ac_power", "AC output power", "{{ value_json.ac_w }}", "W", "power"),
-            "sensor" to sensor("dc_power", "DC output power", "{{ value_json.dc_w }}", "W", "power"),
-            "sensor" to sensor("runtime", "Runtime", "{{ value_json.runtime_min }}", "min", "duration"),
-            "binary_sensor" to common("charging", "Charging").apply {
-                put("value_template", "{{ 'ON' if value_json.charging else 'OFF' }}")
-                put("device_class", "battery_charging")
-            },
-            "switch" to common("ac", "AC output").apply {
-                put("command_topic", "$base/ac/set")
-                put("payload_on", "on")
-                put("payload_off", "off")
-                // null ac_on (switch state not read yet) renders None -> HA shows unknown.
-                put("value_template",
-                    "{{ None if value_json.ac_on is none else ('on' if value_json.ac_on else 'off') }}")
-                put("state_on", "on")
-                put("state_off", "off")
-                put("icon", "mdi:power-socket-us")
-            },
-        )
-        for ((component, cfg) in configs) {
-            val id = cfg.getString("unique_id")
-            c.publish("homeassistant/$component/$id/config", cfg.toString().toByteArray(), 1, true)
+            for (gone in published.keys - next.keys) {
+                val ok = runCatching { c.publish(gone, ByteArray(0), 1, true) }.isSuccess
+                if (ok) published.remove(gone)
+            }
         }
+    }
+
+    /** Retained JSON every config entity reads its state from. */
+    fun publishSettings() {
+        val c = client ?: return
+        if (!c.isConnected) return
+        runCatching {
+            c.publish("${base()}/${MqttEntities.SETTINGS}",
+                MqttEntities.settingsJson(context).toByteArray(), 0, true)
+            _lastSent.value = System.currentTimeMillis()
+        }
+    }
+
+    /** Station alarm as an HA event (not retained). */
+    fun publishAlarm(code: String) {
+        val c = client ?: return
+        if (!c.isConnected) return
+        val json = JSONObject().put("event_type", "alarm").put("code", code).toString()
+        runCatching { c.publish("${base()}/${MqttEntities.ALARM}", json.toByteArray(), 0, false) }
     }
 
     enum class Health { OFF, CONNECTING, CONNECTED, ERROR }

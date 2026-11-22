@@ -29,6 +29,12 @@ CI: GitHub Actions builds the APK on every push. Owner pushes with `push.bat` (l
 - MQTT: publishes HA discovery configs (`homeassistant/<component>/<node>_<id>/config`, retained) for battery/power/runtime sensors, a charging binary_sensor and an AC switch; state JSON carries `ac_on`. The service rebuilds the client in `onStartCommand` when MQTT settings change (Apply button); `MqttBridge.status` drives the status line.
 - Unit tests for the pure protocol layer live in `app/src/test`; CI runs `testDebugUnitTest` before `assembleDebug`.
 
+## MQTT surface (`service/MqttEntities.kt`)
+- `<base>/state` telemetry · `<base>/settings` retained JSON of every setting · `<base>/set/<id>` commands · `<base>/ac/set` (legacy AC) · `<base>/alarm` HMS events · `<base>/availability`.
+- HA discovery is recomputed when station config changes (outputs, reserve, Energy Saver modes, car chargers appear only once reported); vanished entities get an empty retained config. Power output (type 1) is never exposed.
+- Ids: `output_<type>_<seq>`, `discharge_limit`, `charge_limit`, `reserve_enabled`, `reserve_percent`, `energy_saver`, `ups`, `screen_timeout`, `device_timeout`, `temp_unit`, `peak_discharge`, `offpeak_charge`, `offpeak_power`, `car_<iface>_<seq>_{enabled,mode,<field>}`, `auto_*` + automation numbers. Rejected commands post to the status line and re-publish settings so HA snaps back.
+- No AC auto-off select: no verified option list for the 0x0C AC timeout (only UPS on/off).
+
 ## Owner decisions
 - Background service only when an enabled feature needs it, never by default.
 - Storm prep: weather-triggered; raises charge limit to 100% for a hurricane/tropical alert, restores the prior limit after.

@@ -71,10 +71,29 @@ class DjiPowerService : Service() {
         scope.launch(Dispatchers.IO) { runCatching { bridge?.start() } }
         scope.launch {
             // StateFlow drops identical readings, so an idle station would publish
-            // nothing; re-send the current reading as a heartbeat.
+            // nothing; re-send the current reading as a heartbeat. Settings ride along
+            // (app-side automation settings and station-connected have no flow).
             while (isActive) {
                 delay(HEARTBEAT_MS)
                 currentJson()?.let { bridge?.publishState(it) }
+                launch(Dispatchers.IO) { bridge?.publishSettings() }
+            }
+        }
+        scope.launch {
+            // Station config changed: entities may have appeared/vanished, values moved.
+            combine(Conn.energy, Conn.switches, Conn.deviceInfo, Conn.status) { _, _, _, _ -> }
+                .collect {
+                    launch(Dispatchers.IO) {
+                        bridge?.refreshDiscovery()
+                        bridge?.publishSettings()
+                    }
+                }
+        }
+        scope.launch {
+            var lastAlarm = Conn.alarms.value.lastOrNull()?.first ?: 0L
+            Conn.alarms.collect { list ->
+                list.filter { it.first > lastAlarm }.forEach { bridge?.publishAlarm(it.second) }
+                list.lastOrNull()?.let { lastAlarm = maxOf(lastAlarm, it.first) }
             }
         }
         scope.launch {
