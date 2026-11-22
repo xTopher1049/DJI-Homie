@@ -478,7 +478,7 @@ class MainActivity : ComponentActivity() {
             var picker by remember { mutableStateOf<String?>(null) }
             val screenOpts = listOf(0 to "Never", 60 to "1 min", 300 to "5 min",
                 900 to "15 min", 1800 to "30 min")
-            val deviceOpts = listOf(0 to "Never", 3600 to "1 hour", 21600 to "6 hours",
+            val deviceOpts = listOf(0 to "Never", 60 to "1 min", 3600 to "1 hour", 21600 to "6 hours",
                 43200 to "12 hours", 86400 to "24 hours")
 
             deviceInfo?.let { di ->
@@ -516,14 +516,12 @@ class MainActivity : ComponentActivity() {
                 val isScreen = picker == "screen"
                 val opts = if (isScreen) screenOpts else deviceOpts
                 val current = if (isScreen) deviceInfo?.screenTimeoutS else deviceInfo?.deviceTimeoutS
-                val unitLabel = if (isScreen) "minutes" else "hours"
+                val unitLabel = "minutes"
                 var custom by remember(picker) {
                     mutableStateOf(
                         when {
                             current == null || current == 0 -> ""
-                            isScreen -> (current / 60).toString()
-                            current % 3600 == 0 -> (current / 3600).toString()
-                            else -> String.format(java.util.Locale.US, "%.1f", current / 3600.0)
+                            else -> (current / 60).toString()
                         }
                     )
                 }
@@ -563,8 +561,7 @@ class MainActivity : ComponentActivity() {
                         TextButton(onClick = {
                             val d = custom.toDoubleOrNull()
                             if (d != null) {
-                                val sec = if (isScreen) (d * 60).roundToInt()
-                                          else (d * 3600).roundToInt()
+                                val sec = (d * 60).roundToInt()
                                 applyTimeout(sec.coerceAtLeast(0))
                             } else picker = null
                         }) { Text("Set") }
