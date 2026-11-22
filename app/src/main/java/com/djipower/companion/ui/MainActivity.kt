@@ -7,6 +7,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -26,12 +27,15 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.djipower.companion.ble.DeviceScanner
 import com.djipower.companion.ble.DjiPowerDevice
 import com.djipower.companion.data.CredStore
+import com.djipower.companion.data.HistoryStore
 import com.djipower.companion.protocol.DeviceInfo
 import com.djipower.companion.protocol.EnergyConfig
 import com.djipower.companion.protocol.PortSwitch
@@ -53,6 +57,7 @@ class MainActivity : ComponentActivity() {
         requestBlePermissions()
         val creds = CredStore(this)
         val scanner = DeviceScanner(this)
+        val history = HistoryStore(this)
         setContent {
             var themeMode by remember { mutableStateOf(creds.themeMode) }
             val dark = when (themeMode) {
@@ -68,6 +73,7 @@ class MainActivity : ComponentActivity() {
                     } else {
                         Dashboard(
                             creds,
+                            history = history,
                             themeMode = themeMode,
                             onThemeChange = { creds.themeMode = it; themeMode = it },
                             onSignOut = { creds.clear(); device?.disconnect(); onboarded = false },
@@ -88,6 +94,7 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun Dashboard(
         creds: CredStore,
+        history: HistoryStore,
         themeMode: String,
         onThemeChange: (String) -> Unit,
         onSignOut: () -> Unit,
@@ -103,6 +110,7 @@ class MainActivity : ComponentActivity() {
         var showSettings by remember { mutableStateOf(false) }
         var showUpsConfig by remember { mutableStateOf(false) }
         var deviceInfo by remember { mutableStateOf<DeviceInfo?>(null) }
+        var samples by remember { mutableStateOf(history.recent()) }
 
         LaunchedEffect(Unit) {
             val mac = creds.mac ?: return@LaunchedEffect
@@ -111,7 +119,12 @@ class MainActivity : ComponentActivity() {
             device?.disconnect()
             device = DjiPowerDevice(
                 context = this@MainActivity, address = mac, pairKeyHex = key,
-                onState = { s -> runOnUiThread { state = s } },
+                onState = { s -> runOnUiThread {
+                    state = s
+                    if (history.record(s.batteryPercent?.toFloat(), s.outputW, s.inputW)) {
+                        samples = history.recent()
+                    }
+                } },
                 onEvent = { e -> runOnUiThread { status = e } },
                 onConfig = { c -> runOnUiThread { energy = c } },
                 onSwitches = { sw -> runOnUiThread { switches = sw } },
@@ -160,10 +173,14 @@ class MainActivity : ComponentActivity() {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(tab == 0, { tab = 0 }, { Text("Status") })
                 FilterChip(tab == 1, { tab = 1 }, { Text("Energy") })
+                FilterChip(tab == 2, { tab = 2 }, { Text("History") })
             }
 
-            if (tab == 0) StatusTab(state, switches, scope, onAcConfig = { showUpsConfig = true }) { status = it }
-            else EnergyPanel(energy, scope) { status = it }
+            when (tab) {
+                0 -> StatusTab(state, switches, scope, onAcConfig = { showUpsConfig = true }) { status = it }
+                1 -> EnergyPanel(energy, scope) { status = it }
+                else -> HistoryTab(samples)
+            }
         }
         }
 
@@ -529,6 +546,78 @@ private fun fmtTimeout(s: Int): String = when {
     s == 0 -> "Never"
     s % 3600 == 0 -> "${s / 3600} h"
     else -> "${s / 60} min"
+}
+
+@Composable
+private fun HistoryTab(samples: List<HistoryStore.Sample>) {
+    if (samples.size < 2) {
+        Card(Modifier.fillMaxWidth()) {
+            Text("Collecting data… charts appear after a couple of samples (recorded every ~20 s).",
+                Modifier.padding(20.dp))
+        }
+        return
+    }
+    val battery = samples.map { it.battery }
+    val out = samples.map { it.out.toFloat() }
+    val inp = samples.map { it.inp.toFloat() }
+    val maxPower = (out + inp).maxOrNull()?.coerceAtLeast(50f) ?: 50f
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Battery", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            LineChart(listOf(battery to MaterialTheme.colorScheme.primary), 0f, 100f,
+                Modifier.fillMaxWidth().height(130.dp))
+            Text("${battery.last().toInt()}% now · ${samples.size} samples",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Power (W)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            LineChart(
+                listOf(
+                    out to MaterialTheme.colorScheme.secondary,
+                    inp to MaterialTheme.colorScheme.tertiary,
+                ), 0f, maxPower, Modifier.fillMaxWidth().height(130.dp),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                LegendDot("Output", MaterialTheme.colorScheme.secondary)
+                LegendDot("Input", MaterialTheme.colorScheme.tertiary)
+            }
+        }
+    }
+}
+
+@Composable
+private fun LineChart(
+    series: List<Pair<List<Float>, Color>>, min: Float, max: Float, modifier: Modifier,
+) {
+    val track = MaterialTheme.colorScheme.surfaceVariant
+    Canvas(modifier) {
+        val range = (max - min).takeIf { it > 0f } ?: 1f
+        drawLine(track, Offset(0f, size.height), Offset(size.width, size.height), strokeWidth = 2f)
+        series.forEach { (values, color) ->
+            if (values.size < 2) return@forEach
+            val dx = size.width / (values.size - 1)
+            var prev = Offset(0f, size.height - ((values[0] - min) / range).coerceIn(0f, 1f) * size.height)
+            for (i in 1 until values.size) {
+                val x = i * dx
+                val y = size.height - ((values[i] - min) / range).coerceIn(0f, 1f) * size.height
+                drawLine(color, prev, Offset(x, y), strokeWidth = 3f)
+                prev = Offset(x, y)
+            }
+        }
+    }
+}
+
+@Composable
+private fun LegendDot(label: String, color: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Box(Modifier.size(10.dp).background(color, RoundedCornerShape(2.dp)))
+        Text(label, style = MaterialTheme.typography.bodySmall)
+    }
 }
 
 @Composable
