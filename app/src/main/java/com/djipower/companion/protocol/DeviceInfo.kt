@@ -1,6 +1,14 @@
 package com.djipower.companion.protocol
 
-data class Accessory(val type: Int, val firmware: String?)
+data class Accessory(val type: Int, val firmware: String?) {
+    /** Human name for the station's accessory-type code (DJI AccessoryTypeEnum).
+     *  2 confirmed = solar MPPT adapter; extend as other codes are identified. */
+    val name: String
+        get() = when (type) {
+            2 -> "Solar Panel Adapter Module (MPPT)"
+            else -> "Accessory (type $type)"
+        }
+}
 
 data class ExpansionBattery(
     val seq: Int, val serial: String, val percent: Float?,
