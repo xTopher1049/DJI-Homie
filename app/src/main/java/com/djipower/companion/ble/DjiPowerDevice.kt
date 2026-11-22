@@ -49,6 +49,10 @@ class DjiPowerDevice(
     private val pairKey = Duml.normalizePairKey(pairKeyHex)
     private val stream = Duml.Stream()
     private var gatt: BluetoothGatt? = null
+    @Volatile private var shouldReconnect = false
+    private var reconnectAttempt = 0
+    private val connHandler = Handler(Looper.getMainLooper())
+    private val reconnectRunnable = Runnable { if (shouldReconnect) openGatt(true) }
     private var writeChar: BluetoothGattCharacteristic? = null
     private var sequence = 0
     private val pending = HashMap<Int, CompletableDeferred<Duml.Packet>>()
@@ -67,27 +71,56 @@ class DjiPowerDevice(
     private fun nextSeq(): Int { sequence = (sequence + 1) and 0xFFFF; return sequence }
 
     fun connect() {
+        shouldReconnect = true
+        reconnectAttempt = 0
+        openGatt(false)
+    }
+
+    private fun openGatt(auto: Boolean) {
+        try { gatt?.close() } catch (_: Exception) {}
         val mgr = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         val device = mgr.adapter.getRemoteDevice(address)
-        gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
+        gatt = device.connectGatt(context, auto, callback, BluetoothDevice.TRANSPORT_LE)
+    }
+
+    private fun scheduleReconnect() {
+        val delay = minOf(30000L, 1000L shl minOf(reconnectAttempt, 5))
+        reconnectAttempt++
+        onEvent("Connection lost; reconnecting in ${delay / 1000}s")
+        connHandler.removeCallbacks(reconnectRunnable)
+        connHandler.postDelayed(reconnectRunnable, delay)
+    }
+
+    private fun failPending(reason: String) {
+        val ex = IllegalStateException(reason)
+        pending.values.toList().forEach { runCatching { it.completeExceptionally(ex) } }
+        pending.clear()
     }
 
     fun disconnect() {
+        shouldReconnect = false
         authenticated = false
+        connHandler.removeCallbacks(reconnectRunnable)
         rssiHandler.removeCallbacks(rssiRunnable)
+        failPending("disconnected")
         try { gatt?.disconnect(); gatt?.close() } catch (_: Exception) {}
-        gatt = null
+        gatt = null; writeChar = null
     }
 
     private val callback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
+                reconnectAttempt = 0
                 onEvent("Connected; discovering services")
                 g.discoverServices()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 authenticated = false
                 rssiHandler.removeCallbacks(rssiRunnable)
-                onEvent("Disconnected")
+                failPending("connection lost")
+                writeChar = null
+                try { g.close() } catch (_: Exception) {}
+                if (gatt === g) gatt = null
+                if (shouldReconnect) scheduleReconnect() else onEvent("Disconnected")
             }
         }
 
