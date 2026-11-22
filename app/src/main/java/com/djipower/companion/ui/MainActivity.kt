@@ -805,14 +805,6 @@ private fun AutomationsScreen(onBack: () -> Unit, onChanged: () -> Unit) {
                 NumField("AC on for", s.dutyOnMin, "min") { s.dutyOnMin = it; changed() }
                 NumField("Every", s.dutyPeriodMin, "min") { s.dutyPeriodMin = it; changed() }
             }
-            AutomationCard(
-                "Idle power-down",
-                "Powers the whole station off when input and output are both zero for the set time. " +
-                "You'll need to press the station's power button to turn it back on.",
-                s.idlePowerDownEnabled, { s.idlePowerDownEnabled = it; changed() },
-            ) {
-                NumField("Idle for", s.idleMinutes, "min") { s.idleMinutes = it; changed() }
-            }
         }
     }
 }

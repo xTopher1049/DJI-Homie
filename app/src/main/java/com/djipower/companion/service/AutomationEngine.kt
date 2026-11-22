@@ -18,7 +18,6 @@ import com.djipower.companion.protocol.PowerState
 class AutomationEngine(context: Context) {
     private val app = context.applicationContext
     private var zeroBelowSince = 0L
-    private var idleSince = 0L
     private var dutyAnchor = 0L
     private var dutyOn = true
 
@@ -74,22 +73,6 @@ class AutomationEngine(context: Context) {
         if (s.socCutoffEnabled && acOn == true) {
             val pct = state.batteryPercent
             if (pct != null && pct <= s.socCutoffPercent) runCatching { device.setAcOutput(false) }
-        }
-
-        // --- Idle power-down: master power off when input AND output are 0 ---
-        if (s.idlePowerDownEnabled) {
-            val idle = (state.outputW ?: 0) == 0 && (state.inputW ?: 0) == 0
-            if (idle) {
-                if (idleSince == 0L) idleSince = now()
-                else if (now() - idleSince >= s.idleMinutes.coerceAtLeast(1) * 60_000L) {
-                    val powerSeq = switches.firstOrNull { it.type == 1 }?.seq ?: 1
-                    runCatching { device.setPortSwitch(1, powerSeq, false) }; idleSince = 0L
-                }
-            } else {
-                idleSince = 0L
-            }
-        } else {
-            idleSince = 0L
         }
     }
 }

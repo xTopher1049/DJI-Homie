@@ -38,15 +38,9 @@ class AppSettings(context: Context) {
     var dutyPeriodMin: Int
         get() = i("duty_period_min", 60); set(v) = setI("duty_period_min", v)
 
-    // --- Idle power-down (master power off when fully idle) ---
-    var idlePowerDownEnabled: Boolean
-        get() = b("idle_on", false); set(v) = setB("idle_on", v)
-    var idleMinutes: Int
-        get() = i("idle_min", 30); set(v) = setI("idle_min", v)
-
     /** True when any automation that needs the always-on service is enabled. */
     val serviceEnabled: Boolean
-        get() = zeroLoadEnabled || socCutoffEnabled || dutyCycleEnabled || idlePowerDownEnabled
+        get() = zeroLoadEnabled || socCutoffEnabled || dutyCycleEnabled
 
     fun clearAll() = prefs.edit().clear().apply()
 }
