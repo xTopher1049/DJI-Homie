@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.*
@@ -147,6 +148,9 @@ class MainActivity : ComponentActivity() {
                 themeMode = themeMode,
                 onThemeChange = onThemeChange,
                 deviceInfo = deviceInfo,
+                device = device,
+                scope = scope,
+                onError = { status = it },
                 onForget = { confirmForget = true },
                 onBack = { showSettings = false },
             )
@@ -401,6 +405,9 @@ class MainActivity : ComponentActivity() {
         themeMode: String,
         onThemeChange: (String) -> Unit,
         deviceInfo: DeviceInfo?,
+        device: DjiPowerDevice?,
+        scope: CoroutineScope,
+        onError: (String) -> Unit,
         onForget: () -> Unit,
         onBack: () -> Unit,
     ) {
@@ -433,6 +440,72 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            var picker by remember { mutableStateOf<String?>(null) }
+            val screenOpts = listOf(0 to "Never", 60 to "1 min", 300 to "5 min",
+                900 to "15 min", 1800 to "30 min")
+            val deviceOpts = listOf(0 to "Never", 3600 to "1 hour", 21600 to "6 hours",
+                43200 to "12 hours", 86400 to "24 hours")
+
+            deviceInfo?.let { di ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Station settings", style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold)
+                        Text("These change settings on the station itself.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        SettingRow("Screen timeout",
+                            di.screenTimeoutS?.let { fmtTimeout(it) } ?: "—") { picker = "screen" }
+                        SettingRow("Device timeout",
+                            di.deviceTimeoutS?.let { fmtTimeout(it) } ?: "—") { picker = "device" }
+                        Row(Modifier.fillMaxWidth().padding(top = 2.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Text("Temperature unit")
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                FilterChip(di.tempUnitFahrenheit == false,
+                                    { scope.launch { runCatching { device?.setTempUnitFahrenheit(false) }
+                                        .onFailure { onError("Couldn't set unit: ${it.message}") } } },
+                                    { Text("°C") })
+                                FilterChip(di.tempUnitFahrenheit == true,
+                                    { scope.launch { runCatching { device?.setTempUnitFahrenheit(true) }
+                                        .onFailure { onError("Couldn't set unit: ${it.message}") } } },
+                                    { Text("°F") })
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (picker != null) {
+                val isScreen = picker == "screen"
+                val opts = if (isScreen) screenOpts else deviceOpts
+                val current = if (isScreen) deviceInfo?.screenTimeoutS else deviceInfo?.deviceTimeoutS
+                AlertDialog(
+                    onDismissRequest = { picker = null },
+                    title = { Text(if (isScreen) "Screen timeout" else "Device timeout") },
+                    text = {
+                        Column {
+                            opts.forEach { (sec, lbl) ->
+                                Row(Modifier.fillMaxWidth().clickable {
+                                    scope.launch {
+                                        runCatching {
+                                            if (isScreen) device?.setScreenTimeout(sec)
+                                            else device?.setDeviceTimeout(sec)
+                                        }.onFailure { onError("Couldn't set timeout: ${it.message}") }
+                                    }
+                                    picker = null
+                                }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = current == sec, onClick = null)
+                                    Text(lbl)
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = { TextButton(onClick = { picker = null }) { Text("Close") } },
+                )
+            }
+
             deviceInfo?.let { di ->
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -445,11 +518,6 @@ class MainActivity : ComponentActivity() {
                             InfoRow("Maintenance charge", if (it) "Active" else "Normal")
                         }
                         di.cloudConnected?.let { InfoRow("Station cloud link", if (it) "Connected" else "Offline") }
-                        di.screenTimeoutS?.let { InfoRow("Screen timeout", fmtTimeout(it)) }
-                        di.deviceTimeoutS?.let { InfoRow("Device timeout", fmtTimeout(it)) }
-                        di.tempUnitFahrenheit?.let {
-                            InfoRow("Temperature unit", if (it) "°F" else "°C")
-                        }
                         di.accessories.forEach { a ->
                             InfoRow("Accessory", "type ${a.type}" + (a.firmware?.let { " · $it" } ?: ""))
                         }
@@ -600,6 +668,18 @@ private fun InfoRow(label: String, value: String) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value)
+    }
+}
+
+@Composable
+private fun SettingRow(label: String, value: String, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label)
+        Text(value, color = MaterialTheme.colorScheme.primary)
     }
 }
 

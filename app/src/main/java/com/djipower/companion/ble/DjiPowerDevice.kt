@@ -326,14 +326,25 @@ class DjiPowerDevice(
         readConfig()
     }
 
-    /** UPS mode: AC output stays on regardless of load (timeout 0 = never). */
-    suspend fun setAcAlwaysOn(enabled: Boolean) {
+    /** Copy the 0x0C display record, mutate it, write it back, then re-read. */
+    private suspend fun writeDisplay(mutate: (ByteArray) -> Unit) {
         val cur = rawConfig[Energy.DISPLAY_KEY]
             ?: throw IllegalStateException("device settings not loaded yet")
         if (cur.size < 12) throw IllegalStateException("unexpected device-settings size")
         val v = cur.copyOf()
-        writeU32(v, 8, if (enabled) 0 else 1800)
+        mutate(v)
         request(Duml.SET_COMMAND, buildKeyedSet(listOf(Energy.DISPLAY_KEY to v, setRules)))
         readConfig()
     }
+
+    /** UPS mode: AC output stays on regardless of load (timeout 0 = never). */
+    suspend fun setAcAlwaysOn(enabled: Boolean) =
+        writeDisplay { writeU32(it, 8, if (enabled) 0 else 1800) }
+
+    suspend fun setScreenTimeout(seconds: Int) = writeDisplay { writeU32(it, 4, seconds) }
+
+    suspend fun setDeviceTimeout(seconds: Int) = writeDisplay { writeU32(it, 0, seconds) }
+
+    suspend fun setTempUnitFahrenheit(fahrenheit: Boolean) =
+        writeDisplay { if (it.size > 12) it[12] = (if (fahrenheit) 1 else 0).toByte() }
 }
