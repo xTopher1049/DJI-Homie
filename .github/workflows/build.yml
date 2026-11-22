@@ -35,7 +35,7 @@ jobs:
         run: gradle wrapper --gradle-version 8.7
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: ./gradlew testDebugUnitTest assembleDebug --stacktrace
         env:
           VERSION_CODE: ${{ github.run_number }}
           VERSION_NAME: 0.1.${{ github.run_number }}

@@ -20,6 +20,14 @@ CI: GitHub Actions builds the APK on every push. Owner pushes with `push.bat` (l
 - Device-timeout idle counter does not reset when the timeout changes (1 min = immediate off if already idle).
 - More detail: `docs/apk-analysis.md`; reference impl: github.com/zuyan9/ha-dji-power-ble.
 
+## Concurrency / robustness rules
+- Every DUML request goes through `DjiPowerDevice.request()`, serialised by a `Mutex` (one GATT op at a time); a busy `writeCharacteristic` is retried, never ignored. RSSI polling skips while the lock is held.
+- `Duml.Stream` checks the header CRC8 before waiting for a full frame and is cleared on every (re)connect.
+- Storm prep only flips `stormActive` after the station accepts the write; a failed write is retried in ~2 min.
+- Tasker `SET_AC` broadcasts need the `token` extra (shown in the Automations tab).
+- MQTT: retries the first connect with backoff, re-subscribes on every reconnect, publishes retained `<base>/availability` (online/offline, also the LWT).
+- Unit tests for the pure protocol layer live in `app/src/test`; CI runs `testDebugUnitTest` before `assembleDebug`.
+
 ## Owner decisions
 - Background service only when an enabled feature needs it, never by default.
 - Storm prep: weather-triggered; raises charge limit to 100% for a hurricane/tropical alert, restores the prior limit after.

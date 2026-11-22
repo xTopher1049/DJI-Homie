@@ -74,6 +74,18 @@ class AppSettings(context: Context) {
     var mqttBaseTopic: String
         get() = str("mqtt_topic", "dji_power"); set(v) = setStr("mqtt_topic", v)
 
+    /** Shared secret Tasker / MacroDroid must send as the "token" extra with
+     *  SET_AC, so other installed apps can't drive the station. Generated once. */
+    val commandToken: String
+        get() = prefs.getString("cmd_token", null) ?: regenerateCommandToken()
+
+    fun regenerateCommandToken(): String {
+        val bytes = ByteArray(16).also { java.security.SecureRandom().nextBytes(it) }
+        val t = bytes.joinToString("") { "%02x".format(it) }
+        prefs.edit().putString("cmd_token", t).apply()
+        return t
+    }
+
     /** True when any automation that needs the always-on service is enabled. */
     val serviceEnabled: Boolean
         get() = zeroLoadEnabled || socCutoffEnabled || dutyCycleEnabled ||

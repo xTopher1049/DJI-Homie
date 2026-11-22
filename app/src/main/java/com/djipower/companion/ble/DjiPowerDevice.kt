@@ -24,7 +24,13 @@ import com.djipower.companion.protocol.PortSwitch
 import com.djipower.companion.protocol.PowerState
 import com.djipower.companion.protocol.Report
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 
 /**
@@ -58,22 +64,26 @@ class DjiPowerDevice(
     private var reconnectAttempt = 0
     private val connHandler = Handler(Looper.getMainLooper())
     private val reconnectRunnable = Runnable { if (shouldReconnect) openGatt(true) }
-    private var writeChar: BluetoothGattCharacteristic? = null
-    private var sequence = 0
-    private val pending = HashMap<Int, CompletableDeferred<Duml.Packet>>()
-    private val rawConfig = HashMap<Int, ByteArray>()
-    private val setRules = 0x0E to Duml.hexToBytes("0c001e00efffff3f")
-    private var switchList: List<PortSwitch> = emptyList()
+    @Volatile private var writeChar: BluetoothGattCharacteristic? = null
+    private val sequence = AtomicInteger(0)
+    // Touched from the GATT binder thread, the auth thread and coroutine callers.
+    private val pending = ConcurrentHashMap<Int, CompletableDeferred<Duml.Packet>>()
+    private val rawConfig = ConcurrentHashMap<Int, ByteArray>()
+    /** Android allows one outstanding GATT operation; every request goes through this. */
+    private val ioLock = Mutex()
+    private val authRunning = AtomicBoolean(false)
+    @Volatile private var switchList: List<PortSwitch> = emptyList()
     private val rssiHandler = Handler(Looper.getMainLooper())
     private val rssiRunnable = object : Runnable {
         override fun run() {
-            gatt?.readRemoteRssi()
+            // RSSI reads are GATT ops too; skip while a request owns the link.
+            if (!ioLock.isLocked) gatt?.readRemoteRssi()
             rssiHandler.postDelayed(this, 4000)
         }
     }
     @Volatile var authenticated = false; private set
 
-    private fun nextSeq(): Int { sequence = (sequence + 1) and 0xFFFF; return sequence }
+    private fun nextSeq(): Int = sequence.updateAndGet { (it + 1) and 0xFFFF }
 
     fun connect() {
         shouldReconnect = true
@@ -83,6 +93,7 @@ class DjiPowerDevice(
 
     private fun openGatt(auto: Boolean) {
         try { gatt?.close() } catch (_: Exception) {}
+        stream.clear()
         val mgr = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         val device = mgr.adapter.getRemoteDevice(address)
         gatt = device.connectGatt(context, auto, callback, BluetoothDevice.TRANSPORT_LE)
@@ -110,6 +121,7 @@ class DjiPowerDevice(
         failPending("disconnected")
         try { gatt?.disconnect(); gatt?.close() } catch (_: Exception) {}
         gatt = null; writeChar = null
+        stream.clear()
     }
 
     private val callback = object : BluetoothGattCallback() {
@@ -123,6 +135,7 @@ class DjiPowerDevice(
                 rssiHandler.removeCallbacks(rssiRunnable)
                 failPending("connection lost")
                 writeChar = null
+                stream.clear()
                 try { g.close() } catch (_: Exception) {}
                 if (gatt === g) gatt = null
                 if (shouldReconnect) scheduleReconnect() else onEvent("Disconnected")
@@ -152,8 +165,17 @@ class DjiPowerDevice(
         }
 
         override fun onDescriptorWrite(g: BluetoothGatt, d: android.bluetooth.BluetoothGattDescriptor, status: Int) {
-            // Notifications are live; kick off auth on a worker thread.
-            Thread { try { runAuth() } catch (e: Exception) { onEvent("Auth failed: ${e.message}") } }.start()
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                onEvent("Enabling notifications failed ($status); reconnecting")
+                g.disconnect()
+                return
+            }
+            // Notifications are live; kick off auth on a worker thread (once).
+            if (!authRunning.compareAndSet(false, true)) return
+            Thread {
+                try { runAuth() } catch (e: Exception) { onEvent("Auth failed: ${e.message}") }
+                finally { authRunning.set(false) }
+            }.start()
         }
 
         @Deprecated("Deprecated in Java")
@@ -208,26 +230,39 @@ class DjiPowerDevice(
             else -> throw Duml.ProtocolException("unsupported encryption ${packet.encryptionType}")
         }
 
-    /** Send a command and await the matching response (blocking helper). */
-    private suspend fun request(commandId: Int, payload: ByteArray, timeoutMs: Long = 8000): Duml.Packet {
-        val g = gatt ?: throw IllegalStateException("not connected")
-        val w = writeChar ?: throw IllegalStateException("GATT not ready")
-        val seq = nextSeq()
-        var flags = 0x20
-        var body = payload
-        if (encryptedTransport) { body = Duml.encryptPower1000(payload); flags = flags or Duml.POWER_1000_ENCRYPTION_TYPE }
-        val packet = Duml.Packet(Duml.APP_SOURCE, Duml.POWER_DESTINATION, seq, flags, Duml.POWER_COMMAND_SET, commandId, body)
-        val deferred = CompletableDeferred<Duml.Packet>()
-        pending[seq] = deferred
-        @Suppress("DEPRECATION")
-        run {
-            w.value = packet.encode()
-            w.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-            g.writeCharacteristic(w)
+    /**
+     * Send a command and await the matching response. Serialised by [ioLock] so
+     * only one GATT write is ever in flight; a busy stack (e.g. an RSSI read that
+     * slipped in) is retried briefly instead of silently dropping the command.
+     */
+    @Suppress("DEPRECATION")
+    private suspend fun request(commandId: Int, payload: ByteArray, timeoutMs: Long = 8000): Duml.Packet =
+        ioLock.withLock {
+            val g = gatt ?: throw IllegalStateException("not connected")
+            val w = writeChar ?: throw IllegalStateException("GATT not ready")
+            val seq = nextSeq()
+            var flags = 0x20
+            var body = payload
+            if (encryptedTransport) { body = Duml.encryptPower1000(payload); flags = flags or Duml.POWER_1000_ENCRYPTION_TYPE }
+            val packet = Duml.Packet(Duml.APP_SOURCE, Duml.POWER_DESTINATION, seq, flags, Duml.POWER_COMMAND_SET, commandId, body)
+            val bytes = packet.encode()
+            val deferred = CompletableDeferred<Duml.Packet>()
+            pending[seq] = deferred
+            try {
+                var written = false
+                repeat(WRITE_ATTEMPTS) {
+                    if (written) return@repeat
+                    w.value = bytes
+                    w.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                    written = g.writeCharacteristic(w)
+                    if (!written) delay(WRITE_RETRY_MS)
+                }
+                if (!written) throw IllegalStateException("Bluetooth busy; command not sent")
+                withTimeout(timeoutMs) { deferred.await() }
+            } finally {
+                pending.remove(seq)
+            }
         }
-        return try { withTimeout(timeoutMs) { deferred.await() } }
-        finally { pending.remove(seq) }
-    }
 
     private fun runAuth() {
         kotlinx.coroutines.runBlocking {
@@ -253,13 +288,11 @@ class DjiPowerDevice(
     }
 
 
-    /** Toggle the AC main output. */
+    /** Toggle the AC main output (switch row type 2, seq 1). */
     suspend fun setAcOutput(enabled: Boolean) {
         val state = if (enabled) 0x01 else 0x02
         val switchValue = byteArrayOf(0x0D, 0x00, 0x03, 0x00, 0x02, 0x01, state.toByte())
-        val rules = Duml.hexToBytes("0c001e00efffff3f")
-        val payload = buildKeyedSet(listOf(0x0D to switchValue, 0x0E to rules))
-        request(Duml.SET_COMMAND, payload)
+        request(Duml.SET_COMMAND, buildKeyedSet(listOf(0x0D to switchValue, setRules)))
     }
 
     private fun buildKeyedSet(entries: List<Pair<Int, ByteArray>>): ByteArray {
@@ -437,6 +470,7 @@ class DjiPowerDevice(
     suspend fun setChargeLimits(discharge: Int, recharge: Int) {
         val cur = rawConfig[Energy.CHARGE_LIMIT_KEY]
             ?: throw IllegalStateException("charge limits not loaded yet")
+        if (cur.size != 24) throw IllegalStateException("unexpected charge-limit record size")
         val v = cur.copyOf()
         writeU32(v, 8, recharge)
         writeU32(v, 20, discharge)
@@ -446,7 +480,9 @@ class DjiPowerDevice(
 
     /** Enable/disable the custom backup reserve and/or set its level. */
     suspend fun setReserve(enabled: Boolean? = null, percent: Int? = null, min: Int = 0, max: Int = 100) {
-        val cur = rawConfig[Energy.ENERGY_STORAGE_KEY] ?: return
+        val cur = rawConfig[Energy.ENERGY_STORAGE_KEY]
+            ?: throw IllegalStateException("backup reserve not loaded yet")
+        if (cur.size < 4) throw IllegalStateException("unexpected reserve record size")
         if ((cur[0].toInt() and 0xFF) != 1) throw IllegalStateException("no custom reserve on this station")
         val v = cur.copyOf()
         if (enabled != null) v[1] = (if (enabled) 1 else 2).toByte()
@@ -466,14 +502,42 @@ class DjiPowerDevice(
         readConfig()
     }
 
-    /** UPS mode: AC output stays on regardless of load (timeout 0 = never). */
-    suspend fun setAcAlwaysOn(enabled: Boolean) =
-        writeDisplay { writeU32(it, 8, if (enabled) 0 else 1800) }
+    /** UPS mode: AC output stays on regardless of load (timeout 0 = never).
+     *  Turning it off restores the timeout that was set before it was turned on. */
+    suspend fun setAcAlwaysOn(enabled: Boolean) {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val current = rawConfig[Energy.DISPLAY_KEY]?.let { Energy.parseAcTimeout(it) }
+        if (enabled && current != null && current > 0) {
+            prefs.edit().putInt(KEY_AC_TIMEOUT_BEFORE_UPS, current).apply()
+        }
+        val restore = prefs.getInt(KEY_AC_TIMEOUT_BEFORE_UPS, DEFAULT_AC_TIMEOUT_S)
+            .takeIf { it > 0 } ?: DEFAULT_AC_TIMEOUT_S
+        writeDisplay { writeU32(it, 8, if (enabled) 0 else restore) }
+    }
 
     suspend fun setScreenTimeout(seconds: Int) = writeDisplay { writeU32(it, 4, seconds) }
 
     suspend fun setDeviceTimeout(seconds: Int) = writeDisplay { writeU32(it, 0, seconds) }
 
-    suspend fun setTempUnitFahrenheit(fahrenheit: Boolean) =
-        writeDisplay { if (it.size > 12) it[12] = (if (fahrenheit) 1 else 0).toByte() }
+    suspend fun setTempUnitFahrenheit(fahrenheit: Boolean) {
+        val cur = rawConfig[Energy.DISPLAY_KEY]
+        if (cur != null && cur.size <= 12) throw IllegalStateException("this station has no temperature-unit setting")
+        writeDisplay { it[12] = (if (fahrenheit) 1 else 0).toByte() }
+    }
+
+    private companion object {
+        /**
+         * Appended to every keyed SET as key 0x0E. Inherited from the original
+         * port and works on a Power 1000 v1, but it does NOT match the 0x0E rules
+         * layout [Advanced.parseRules] reads (u16 length + ASCII hex), so its exact
+         * meaning is unverified. Check this first if a SET misbehaves on another model.
+         */
+        val setRules = 0x0E to Duml.hexToBytes("0c001e00efffff3f")
+
+        const val WRITE_ATTEMPTS = 5
+        const val WRITE_RETRY_MS = 60L
+        const val PREFS = "dji_homie_device"
+        const val KEY_AC_TIMEOUT_BEFORE_UPS = "ac_timeout_before_ups"
+        const val DEFAULT_AC_TIMEOUT_S = 1800
+    }
 }

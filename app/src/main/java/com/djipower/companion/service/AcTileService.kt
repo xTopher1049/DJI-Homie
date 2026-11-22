@@ -26,7 +26,8 @@ class AcTileService : TileService() {
         val device = Conn.device
         val acOn = Conn.switches.value.firstOrNull { it.type == 2 }?.on
         if (device != null && acOn != null) {
-            scope.launch { runCatching { device.setAcOutput(!acOn) } }
+            // On failure, snap the tile back to the real switch state.
+            scope.launch { runCatching { device.setAcOutput(!acOn) }.onFailure { render() } }
             // optimistic flip; the next 0x61 report confirms it
             qsTile?.state = if (acOn) Tile.STATE_INACTIVE else Tile.STATE_ACTIVE
             qsTile?.updateTile()

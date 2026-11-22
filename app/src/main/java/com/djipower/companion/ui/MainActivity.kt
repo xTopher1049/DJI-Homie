@@ -17,6 +17,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -681,6 +684,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        Conn.uiActive = true
+    }
+
+    override fun onStop() {
+        Conn.uiActive = false
+        super.onStop()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         if (!AppSettings(this).serviceEnabled) Conn.stop()
@@ -901,10 +914,38 @@ private fun AutomationsScreen(
                 StrField("Base topic", s.mqttBaseTopic) { s.mqttBaseTopic = it }
                 StrField("Username (optional)", s.mqttUser) { s.mqttUser = it }
                 StrField("Password (optional)", s.mqttPass) { s.mqttPass = it }
-                Text("Publishes ${s.mqttBaseTopic.ifBlank { "dji_power" }}/state · listens " +
-                    "…/ac/set (on/off). Toggle off and on to apply changes.",
+                Text("Publishes ${s.mqttBaseTopic.ifBlank { "dji_power" }}/state and …/availability · " +
+                    "listens …/ac/set (on/off). Toggle off and on to apply changes.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            TaskerCard(s)
+        }
+    }
+}
+
+/** Shows the shared token Tasker / MacroDroid must send with the SET_AC broadcast. */
+@Composable
+private fun TaskerCard(s: AppSettings) {
+    val clipboard = LocalClipboardManager.current
+    var token by remember { mutableStateOf(s.commandToken) }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Tasker / MacroDroid", style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold)
+            Text("Send broadcast com.djipower.companion.SET_AC with boolean extra \"on\" and " +
+                "string extra \"token\" set to the value below. Broadcasts without it are ignored.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(token, fontFamily = FontFamily.Monospace,
+                style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { clipboard.setText(AnnotatedString(token)) }) {
+                    Text("Copy")
+                }
+                OutlinedButton(onClick = { token = s.regenerateCommandToken() }) {
+                    Text("New token")
+                }
             }
         }
     }

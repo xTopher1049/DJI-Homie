@@ -24,6 +24,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import org.json.JSONObject
 import kotlinx.coroutines.launch
 
@@ -44,12 +45,13 @@ class DjiPowerService : Service() {
     override fun onCreate() {
         super.onCreate()
         createChannel()
-        startForegroundNow(notification(Conn.state.value, Conn.status.value))
+        startForegroundNow(notification(title(Conn.state.value), Conn.status.value))
         Conn.start(this)
         scope.launch {
-            combine(Conn.state, Conn.status) { s, st -> s to st }.collect { (s, st) ->
-                nm().notify(NOTIF_ID, notification(s, st))
-            }
+            // Re-post only when the visible text changes, not on every telemetry report.
+            combine(Conn.state, Conn.status) { s, st -> title(s) to st }
+                .distinctUntilChanged()
+                .collect { (t, st) -> nm().notify(NOTIF_ID, notification(t, st)) }
         }
         val engine = AutomationEngine(this)
         scope.launch {
@@ -57,9 +59,10 @@ class DjiPowerService : Service() {
             while (isActive) {
                 runCatching { engine.evaluate() }
                 val n = android.os.SystemClock.elapsedRealtime()
-                if (n - lastStorm >= 20 * 60_000L) {
-                    lastStorm = n
-                    runCatching { engine.pollStorm() }
+                if (n - lastStorm >= STORM_POLL_MS) {
+                    val retry = runCatching { engine.pollStorm() }.getOrDefault(false)
+                    // A storm write that didn't land is retried in ~2 min, not 20.
+                    lastStorm = if (retry) n - STORM_POLL_MS + STORM_RETRY_MS else n
                 }
                 delay(20_000)
             }
@@ -88,8 +91,11 @@ class DjiPowerService : Service() {
     }
 
     override fun onDestroy() {
-        runCatching { bridge?.stop() }
+        runCatching { bridge?.shutdown() }
         scope.cancel()
+        // Without the service nothing keeps the process's BLE link justified; drop it
+        // unless the UI is on screen and still using it.
+        if (!Conn.uiActive) Conn.stop()
         super.onDestroy()
     }
 
@@ -112,11 +118,8 @@ class DjiPowerService : Service() {
         }
     }
 
-    private fun notification(s: PowerState?, status: String): Notification {
-        val pi = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
-        )
-        val title = if (s != null) {
+    private fun title(s: PowerState?): String =
+        if (s != null) {
             val pct = s.batteryPercent?.let { "${it.toInt()}%" } ?: "—"
             val out = s.outputW?.takeIf { it > 0 }?.let { " • ${it}W out" } ?: ""
             val inp = s.inputW?.takeIf { it > 0 }?.let { " • ${it}W in" } ?: ""
@@ -124,6 +127,11 @@ class DjiPowerService : Service() {
         } else {
             "DJI Power"
         }
+
+    private fun notification(title: String, status: String): Notification {
+        val pi = PendingIntent.getActivity(
+            this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
+        )
         return NotificationCompat.Builder(this, CHANNEL)
             .setContentTitle(title)
             .setContentText(status)
@@ -137,6 +145,8 @@ class DjiPowerService : Service() {
     companion object {
         private const val CHANNEL = "station_monitor"
         private const val NOTIF_ID = 1001
+        private const val STORM_POLL_MS = 20 * 60_000L
+        private const val STORM_RETRY_MS = 2 * 60_000L
 
         fun start(ctx: Context) {
             ContextCompat.startForegroundService(ctx, Intent(ctx, DjiPowerService::class.java))

@@ -52,6 +52,11 @@ object Conn {
     private var history: HistoryStore? = null
     private var lastWidgetWrite = 0L
 
+    /** True while MainActivity is started; the service leaves the link up for it. */
+    @Volatile
+    var uiActive = false
+
+    @Synchronized
     fun history(context: Context): HistoryStore =
         history ?: HistoryStore(context.applicationContext).also { history = it }
 
@@ -104,6 +109,8 @@ object Conn {
         device?.disconnect()
         device = null
         _state.value = null
+        _energy.value = null
+        _deviceInfo.value = null
         _switches.value = emptyList()
         _rssi.value = null
         _status.value = "Idle"

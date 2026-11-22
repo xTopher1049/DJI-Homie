@@ -171,8 +171,10 @@ object Duml {
     class Stream {
         private val buffer = ArrayList<Byte>()
 
+        @Synchronized
         fun clear() = buffer.clear()
 
+        @Synchronized
         fun feed(data: ByteArray): List<Packet> {
             for (b in data) buffer.add(b)
             return extract()
@@ -187,6 +189,10 @@ object Duml {
                 if (buffer.size < 4) break
                 val length = (buffer[1].toInt() and 0xFF) or ((buffer[2].toInt() and 0x03) shl 8)
                 if (length < 13 || length > 0x03FF) { buffer.removeAt(0); continue }
+                // Validate the header CRC before waiting for a full frame, so a stray
+                // 0x55 in noise can't swallow the real frames that follow it.
+                val header = byteArrayOf(buffer[0], buffer[1], buffer[2])
+                if ((buffer[3].toInt() and 0xFF) != crc8(header)) { buffer.removeAt(0); continue }
                 if (buffer.size < length) break
                 val frame = ByteArray(length) { buffer[it] }
                 repeat(length) { buffer.removeAt(0) }

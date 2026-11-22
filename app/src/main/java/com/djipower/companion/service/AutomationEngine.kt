@@ -86,25 +86,35 @@ class AutomationEngine(context: Context) {
 
     /** Storm prep: raise charge limit to full while a storm alert is active for the
      *  saved location, and restore the prior limit when it clears. Call on a slow
-     *  cadence (NWS alerts change on the scale of minutes/hours). */
-    suspend fun pollStorm() {
+     *  cadence (NWS alerts change on the scale of minutes/hours).
+     *
+     *  The stored storm state only changes after the station accepts the write, so
+     *  a failed write (station out of range, not yet connected) is retried rather
+     *  than leaving the limit stuck. Returns true when a write is still owed and the
+     *  caller should poll again soon. */
+    suspend fun pollStorm(): Boolean {
         val s = AppSettings(app)
-        if (!s.stormPrepEnabled) return
+        if (!s.stormPrepEnabled) return false
         val lat = s.stormLat.toDouble()
         val lon = s.stormLon.toDouble()
-        if (lat == 0.0 && lon == 0.0) return
-        val active = withContext(Dispatchers.IO) { WeatherMonitor.stormActive(lat, lon) } ?: return
-        val limits = Conn.energy.value?.limits ?: return
-        val device = Conn.device ?: return
-        if (active && !s.stormActive) {
-            s.stormSavedCharge = limits.recharge
+        if (lat == 0.0 && lon == 0.0) return false
+        val active = withContext(Dispatchers.IO) { WeatherMonitor.stormActive(lat, lon) } ?: return false
+        if (active == s.stormActive) return false
+        val limits = Conn.energy.value?.limits ?: return true
+        val device = Conn.device ?: return true
+        if (active) {
+            val saved = limits.recharge
+            val ok = runCatching { device.setChargeLimits(limits.discharge, limits.rechargeMax) }.isSuccess
+            if (!ok) return true
+            s.stormSavedCharge = saved
             s.stormActive = true
-            runCatching { device.setChargeLimits(limits.discharge, limits.rechargeMax) }
-        } else if (!active && s.stormActive) {
+        } else {
             val restore = s.stormSavedCharge.takeIf { it in 1..100 } ?: limits.recharge
+            val ok = runCatching { device.setChargeLimits(limits.discharge, restore) }.isSuccess
+            if (!ok) return true
             s.stormActive = false
-            runCatching { device.setChargeLimits(limits.discharge, restore) }
         }
+        return false
     }
 
     private fun broadcastEvent(event: String) {
