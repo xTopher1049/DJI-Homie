@@ -12,7 +12,8 @@ import android.content.Context
 import com.djipower.companion.protocol.Models
 import android.os.Handler
 import android.os.Looper
-XYZimport com.djipower.companion.protocol.Energy
+import com.djipower.companion.protocol.Duml
+import com.djipower.companion.protocol.Energy
 import com.djipower.companion.protocol.DeviceInfo
 import com.djipower.companion.protocol.DeviceInfoParser
 import com.djipower.companion.protocol.EnergyConfig
