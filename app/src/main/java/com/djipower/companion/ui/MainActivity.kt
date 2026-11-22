@@ -38,7 +38,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.djipower.companion.ble.DeviceScanner
-import com.djipower.companion.ble.DjiPowerDevice
 import com.djipower.companion.data.AppSettings
 import com.djipower.companion.data.Conn
 import com.djipower.companion.data.CredStore
@@ -122,7 +121,6 @@ class MainActivity : ComponentActivity() {
         val alarms by Conn.alarms.collectAsState()
         val historyRev by Conn.historyRev.collectAsState()
         val samples = remember(historyRev) { history.recent() }
-        val device = Conn.device
         var tab by remember { mutableStateOf(0) }
         var confirmForget by remember { mutableStateOf(false) }
         var showSettings by remember { mutableStateOf(false) }
@@ -139,7 +137,6 @@ class MainActivity : ComponentActivity() {
                 themeMode = themeMode,
                 onThemeChange = onThemeChange,
                 deviceInfo = deviceInfo,
-                device = device,
                 scope = scope,
                 onError = { Conn.postStatus(it) },
                 onForget = { confirmForget = true },
@@ -196,7 +193,7 @@ class MainActivity : ComponentActivity() {
                             Text("Keep AC on (UPS mode)")
                             Switch(checked = upsOn, onCheckedChange = { v ->
                                 scope.launch {
-                                    runCatching { device?.setAcAlwaysOn(v) }
+                                    runCatching { Conn.device?.setAcAlwaysOn(v) }
                                         .onFailure { Conn.postStatus("UPS set failed: ${it.message}") }
                                 }
                             })
@@ -266,7 +263,7 @@ class MainActivity : ComponentActivity() {
             PortCard(sw.label, portIcon(sw.type), portDetail(pp?.outputW ?: 0, pp?.inputW ?: 0, sw.on),
                 checked = sw.on, onToggle = { v ->
                     scope.launch {
-                        runCatching { device?.setPortSwitch(sw.type, sw.seq, v) }
+                        runCatching { Conn.device?.setPortSwitch(sw.type, sw.seq, v) }
                             .onFailure { onError("switch failed: ${it.message}") }
                     }
                 }, onConfig = if (sw.type == 2) onAcConfig else null)
@@ -327,7 +324,7 @@ class MainActivity : ComponentActivity() {
                     valueRange = cl.dischargeMin.toFloat()..cl.rechargeMax.toFloat(),
                     onValueChangeFinished = {
                         scope.launch {
-                            runCatching { device?.setChargeLimits(dsch.toInt(), rch.toInt()) }
+                            runCatching { Conn.device?.setChargeLimits(dsch.toInt(), rch.toInt()) }
                                 .onFailure { onError("limit set failed: ${it.message}") }
                         }
                     },
@@ -347,7 +344,7 @@ class MainActivity : ComponentActivity() {
                         Switch(checked = on, onCheckedChange = { v ->
                             on = v
                             scope.launch {
-                                runCatching { device?.setReserve(enabled = v) }
+                                runCatching { Conn.device?.setReserve(enabled = v) }
                                     .onFailure { onError("reserve toggle failed: ${it.message}") }
                             }
                         })
@@ -366,7 +363,7 @@ class MainActivity : ComponentActivity() {
                             valueRange = lo.toFloat()..hi.toFloat(),
                             onValueChangeFinished = {
                                 scope.launch {
-                                    runCatching { device?.setReserve(percent = pct.toInt(), min = lo, max = hi) }
+                                    runCatching { Conn.device?.setReserve(percent = pct.toInt(), min = lo, max = hi) }
                                         .onFailure { onError("reserve level failed: ${it.message}") }
                                 }
                             },
@@ -397,7 +394,6 @@ class MainActivity : ComponentActivity() {
         themeMode: String,
         onThemeChange: (String) -> Unit,
         deviceInfo: DeviceInfo?,
-        device: DjiPowerDevice?,
         scope: CoroutineScope,
         onError: (String) -> Unit,
         onForget: () -> Unit,
@@ -456,11 +452,11 @@ class MainActivity : ComponentActivity() {
                             Text("Temperature unit")
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 FilterChip(di.tempUnitFahrenheit == false,
-                                    { scope.launch { runCatching { device?.setTempUnitFahrenheit(false) }
+                                    { scope.launch { runCatching { Conn.device?.setTempUnitFahrenheit(false) }
                                         .onFailure { onError("Couldn't set unit: ${it.message}") } } },
                                     { Text("°C") })
                                 FilterChip(di.tempUnitFahrenheit == true,
-                                    { scope.launch { runCatching { device?.setTempUnitFahrenheit(true) }
+                                    { scope.launch { runCatching { Conn.device?.setTempUnitFahrenheit(true) }
                                         .onFailure { onError("Couldn't set unit: ${it.message}") } } },
                                     { Text("°F") })
                             }
@@ -487,8 +483,8 @@ class MainActivity : ComponentActivity() {
                 fun applyTimeout(sec: Int) {
                     scope.launch {
                         runCatching {
-                            if (isScreen) device?.setScreenTimeout(sec)
-                            else device?.setDeviceTimeout(sec)
+                            if (isScreen) Conn.device?.setScreenTimeout(sec)
+                            else Conn.device?.setDeviceTimeout(sec)
                         }.onFailure { onError("Couldn't set timeout: ${it.message}") }
                     }
                     picker = null
