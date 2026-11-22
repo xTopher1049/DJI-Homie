@@ -9,7 +9,11 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.*
@@ -44,6 +48,7 @@ import com.djipower.companion.protocol.PortSwitch
 import com.djipower.companion.protocol.PowerState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 /** Routes first-run onboarding -> dashboard. */
 class MainActivity : ComponentActivity() {
@@ -400,6 +405,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    @OptIn(ExperimentalLayoutApi::class)
     @Composable
     private fun SettingsScreen(
         themeMode: String,
@@ -481,28 +487,60 @@ class MainActivity : ComponentActivity() {
                 val isScreen = picker == "screen"
                 val opts = if (isScreen) screenOpts else deviceOpts
                 val current = if (isScreen) deviceInfo?.screenTimeoutS else deviceInfo?.deviceTimeoutS
+                val unitLabel = if (isScreen) "minutes" else "hours"
+                var custom by remember(picker) {
+                    mutableStateOf(
+                        when {
+                            current == null || current == 0 -> ""
+                            isScreen -> (current / 60).toString()
+                            current % 3600 == 0 -> (current / 3600).toString()
+                            else -> String.format(java.util.Locale.US, "%.1f", current / 3600.0)
+                        }
+                    )
+                }
+                fun applyTimeout(sec: Int) {
+                    scope.launch {
+                        runCatching {
+                            if (isScreen) device?.setScreenTimeout(sec)
+                            else device?.setDeviceTimeout(sec)
+                        }.onFailure { onError("Couldn't set timeout: ${it.message}") }
+                    }
+                    picker = null
+                }
                 AlertDialog(
                     onDismissRequest = { picker = null },
                     title = { Text(if (isScreen) "Screen timeout" else "Device timeout") },
                     text = {
-                        Column {
-                            opts.forEach { (sec, lbl) ->
-                                Row(Modifier.fillMaxWidth().clickable {
-                                    scope.launch {
-                                        runCatching {
-                                            if (isScreen) device?.setScreenTimeout(sec)
-                                            else device?.setDeviceTimeout(sec)
-                                        }.onFailure { onError("Couldn't set timeout: ${it.message}") }
-                                    }
-                                    picker = null
-                                }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    RadioButton(selected = current == sec, onClick = null)
-                                    Text(lbl)
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                opts.forEach { (sec, lbl) ->
+                                    FilterChip(current == sec, { applyTimeout(sec) }, { Text(lbl) })
                                 }
                             }
+                            OutlinedTextField(
+                                value = custom,
+                                onValueChange = { v -> custom = v.filter { it.isDigit() || it == '.' } },
+                                label = { Text("Custom ($unitLabel)") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            )
+                            Text("0 = never. The station may round to its own steps; " +
+                                "the value re-reads after saving so you'll see what it kept.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     },
-                    confirmButton = { TextButton(onClick = { picker = null }) { Text("Close") } },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            val d = custom.toDoubleOrNull()
+                            if (d != null) {
+                                val sec = if (isScreen) (d * 60).roundToInt()
+                                          else (d * 3600).roundToInt()
+                                applyTimeout(sec.coerceAtLeast(0))
+                            } else picker = null
+                        }) { Text("Set") }
+                    },
+                    dismissButton = { TextButton(onClick = { picker = null }) { Text("Cancel") } },
                 )
             }
 
