@@ -39,10 +39,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.djipower.companion.ble.DeviceScanner
 import com.djipower.companion.ble.DjiPowerDevice
+import com.djipower.companion.data.AppSettings
+import com.djipower.companion.data.Conn
 import com.djipower.companion.data.CredStore
 import com.djipower.companion.data.HistoryStore
+import com.djipower.companion.service.DjiPowerService
 import com.djipower.companion.protocol.DeviceInfo
-import com.djipower.companion.protocol.Duml
 import com.djipower.companion.protocol.EnergyConfig
 import com.djipower.companion.protocol.PortSwitch
 import com.djipower.companion.protocol.PowerState
@@ -53,8 +55,6 @@ import kotlin.math.roundToInt
 /** Routes first-run onboarding -> dashboard. */
 class MainActivity : ComponentActivity() {
 
-    private var device: DjiPowerDevice? = null
-
     private val permLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { }
@@ -64,7 +64,7 @@ class MainActivity : ComponentActivity() {
         requestBlePermissions()
         val creds = CredStore(this)
         val scanner = DeviceScanner(this)
-        val history = HistoryStore(this)
+        val history = Conn.history(this)
         setContent {
             var themeMode by remember { mutableStateOf(creds.themeMode) }
             val dark = when (themeMode) {
@@ -83,7 +83,13 @@ class MainActivity : ComponentActivity() {
                             history = history,
                             themeMode = themeMode,
                             onThemeChange = { creds.themeMode = it; themeMode = it },
-                            onSignOut = { creds.clear(); device?.disconnect(); onboarded = false },
+                            onSignOut = {
+                                creds.clear()
+                                AppSettings(this@MainActivity).serviceEnabled = false
+                                DjiPowerService.stop(this@MainActivity)
+                                Conn.stop()
+                                onboarded = false
+                            },
                         )
                     }
                 }
@@ -107,43 +113,23 @@ class MainActivity : ComponentActivity() {
         onSignOut: () -> Unit,
     ) {
         val scope = rememberCoroutineScope()
-        var status by remember { mutableStateOf("Idle") }
-        var state by remember { mutableStateOf<PowerState?>(null) }
-        var energy by remember { mutableStateOf<EnergyConfig?>(null) }
+        val status by Conn.status.collectAsState()
+        val state by Conn.state.collectAsState()
+        val energy by Conn.energy.collectAsState()
+        val switches by Conn.switches.collectAsState()
+        val rssi by Conn.rssi.collectAsState()
+        val deviceInfo by Conn.deviceInfo.collectAsState()
+        val alarms by Conn.alarms.collectAsState()
+        val historyRev by Conn.historyRev.collectAsState()
+        val samples = remember(historyRev) { history.recent() }
+        val device = Conn.device
         var tab by remember { mutableStateOf(0) }
-        var switches by remember { mutableStateOf<List<PortSwitch>>(emptyList()) }
         var confirmForget by remember { mutableStateOf(false) }
-        var rssi by remember { mutableStateOf<Int?>(null) }
         var showSettings by remember { mutableStateOf(false) }
         var showUpsConfig by remember { mutableStateOf(false) }
-        var deviceInfo by remember { mutableStateOf<DeviceInfo?>(null) }
-        var samples by remember { mutableStateOf(history.recent()) }
-        var alarms by remember { mutableStateOf<List<Pair<Long, String>>>(emptyList()) }
 
-        LaunchedEffect(Unit) {
-            val mac = creds.mac ?: return@LaunchedEffect
-            val key = creds.pairKey ?: return@LaunchedEffect
-            status = "Connecting…"
-            device?.disconnect()
-            device = DjiPowerDevice(
-                context = this@MainActivity, address = mac, pairKeyHex = key,
-                onState = { s -> runOnUiThread {
-                    state = s
-                    if (history.record(s.batteryPercent?.toFloat(), s.outputW, s.inputW)) {
-                        samples = history.recent()
-                    }
-                } },
-                onEvent = { e -> runOnUiThread { status = e } },
-                onConfig = { c -> runOnUiThread { energy = c } },
-                onSwitches = { sw -> runOnUiThread { switches = sw } },
-                onRssi = { r -> runOnUiThread { rssi = r } },
-                onDeviceInfo = { di -> runOnUiThread { deviceInfo = di } },
-                onHms = { b -> runOnUiThread {
-                    alarms = (alarms + (System.currentTimeMillis() to Duml.bytesToHex(b))).takeLast(50)
-                } },
-            ).also { it.connect() }
-        }
-        LaunchedEffect(tab) { if (tab == 1) runCatching { device?.readConfig() } }
+        LaunchedEffect(Unit) { Conn.start(this@MainActivity) }
+        LaunchedEffect(tab) { if (tab == 1) runCatching { Conn.device?.readConfig() } }
 
         // System back gesture closes an open menu instead of exiting.
         BackHandler(enabled = showSettings) { showSettings = false }
@@ -155,7 +141,7 @@ class MainActivity : ComponentActivity() {
                 deviceInfo = deviceInfo,
                 device = device,
                 scope = scope,
-                onError = { status = it },
+                onError = { Conn.postStatus(it) },
                 onForget = { confirmForget = true },
                 onBack = { showSettings = false },
             )
@@ -191,8 +177,8 @@ class MainActivity : ComponentActivity() {
             }
 
             when (tab) {
-                0 -> StatusTab(state, switches, alarms, scope, onAcConfig = { showUpsConfig = true }) { status = it }
-                1 -> EnergyPanel(energy, scope) { status = it }
+                0 -> StatusTab(state, switches, alarms, scope, onAcConfig = { showUpsConfig = true }) { Conn.postStatus(it) }
+                1 -> EnergyPanel(energy, scope) { Conn.postStatus(it) }
                 else -> HistoryTab(samples)
             }
         }
@@ -211,7 +197,7 @@ class MainActivity : ComponentActivity() {
                             Switch(checked = upsOn, onCheckedChange = { v ->
                                 scope.launch {
                                     runCatching { device?.setAcAlwaysOn(v) }
-                                        .onFailure { status = "UPS set failed: ${it.message}" }
+                                        .onFailure { Conn.postStatus("UPS set failed: ${it.message}") }
                                 }
                             })
                         }
@@ -597,7 +583,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        device?.disconnect()
+        if (!AppSettings(this).serviceEnabled) Conn.stop()
     }
 }
 
