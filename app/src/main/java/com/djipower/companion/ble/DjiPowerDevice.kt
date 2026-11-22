@@ -254,7 +254,7 @@ class DjiPowerDevice(
         val resp = request(
             Duml.GET_COMMAND,
             byteArrayOf(
-                0x00, 0x00, 0x10, 0x02, 0x10, 0x04, 0x10, 0x05, 0x10,
+                0x00, 0x00, 0x10, 0x01, 0x10, 0x02, 0x10, 0x04, 0x10, 0x05, 0x10,
                 0x06, 0x10, 0x0C, 0x10, 0x0D, 0x10,
             ),
         )
@@ -278,7 +278,7 @@ class DjiPowerDevice(
             val acTimeout = rawConfig[Energy.DISPLAY_KEY]?.let { Energy.parseAcTimeout(it) }
             onConfig(EnergyConfig(limits, reserve, acTimeout))
         }
-        if (keyed.keys.any { it == 0x00 || it == 0x02 || it == 0x04 || it == 0x0C }) {
+        if (keyed.keys.any { it == 0x00 || it == 0x01 || it == 0x02 || it == 0x04 || it == 0x0C }) {
             onDeviceInfo(DeviceInfoParser.parse(payload))
         }
     }

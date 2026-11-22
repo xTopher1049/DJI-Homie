@@ -448,6 +448,20 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            deviceInfo?.expansionBatteries?.takeIf { it.isNotEmpty() }?.let { packs ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Expansion batteries", style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold)
+                        packs.forEach { b ->
+                            InfoRow("Pack ${b.seq}",
+                                "${b.percent?.toInt() ?: "?"}%  ·  ${b.cycleCount} cyc  ·  ${b.ratedWh} Wh")
+                            b.firmware?.let { InfoRow("  firmware", it) }
+                        }
+                    }
+                }
+            }
+
             OutlinedButton(onClick = onForget, modifier = Modifier.fillMaxWidth()) {
                 Text("Forget station")
             }

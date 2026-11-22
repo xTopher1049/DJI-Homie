@@ -2,6 +2,11 @@ package com.djipower.companion.protocol
 
 data class Accessory(val type: Int, val firmware: String?)
 
+data class ExpansionBattery(
+    val seq: Int, val serial: String, val percent: Float?,
+    val cycleCount: Int, val ratedWh: Int, val temperatureC: Float?, val firmware: String?,
+)
+
 data class DeviceInfo(
     val firmware: String? = null,
     val dongleFirmware: String? = null,
@@ -13,10 +18,12 @@ data class DeviceInfo(
     val screenTimeoutS: Int? = null,
     val acTimeoutS: Int? = null,
     val tempUnitFahrenheit: Boolean? = null,
+    val expansionBatteries: List<ExpansionBattery> = emptyList(),
 )
 
 object DeviceInfoParser {
     const val BASE_KEY = 0x00
+    const val EXPANSION_KEY = 0x01
     const val NETWORK_KEY = 0x02
     const val ACCESSORIES_KEY = 0x04
     const val DISPLAY_KEY = 0x0C
@@ -50,6 +57,7 @@ object DeviceInfoParser {
         }
         keyed[NETWORK_KEY]?.let { if (it.isNotEmpty()) di = di.copy(cloudConnected = it[0].toInt() != 0) }
         keyed[ACCESSORIES_KEY]?.let { di = di.copy(accessories = parseAccessories(it)) }
+        keyed[EXPANSION_KEY]?.let { di = di.copy(expansionBatteries = parseExpansion(it)) }
         keyed[DISPLAY_KEY]?.let { d ->
             di = di.copy(
                 deviceTimeoutS = if (d.size >= 4) u32(d, 0) else null,
@@ -60,6 +68,24 @@ object DeviceInfoParser {
         }
         return di
     }
+
+    private fun parseExpansion(value: ByteArray): List<ExpansionBattery> =
+        Report.parseTlvs(value).filter { it.tag == 0x100F }.mapNotNull { tlv ->
+            val row = tlv.value
+            if (row.size < 31) return@mapNotNull null
+            val capacity = u32(row, 7)
+            if (capacity == 0) return@mapNotNull null
+            val serial = ascii(row, 15, 31) ?: return@mapNotNull null
+            val percent = u16(row, 1) / 100f
+            val temp = if (row.size >= 34 && (row[33].toInt() and 0xFF) in intArrayOf(1, 2, 3)) {
+                val raw = u16(row, 31); (if (raw >= 0x8000) raw - 0x10000 else raw) / 100f
+            } else null
+            val fw = if (row.size >= 50) ascii(row, 34, 50) else null
+            ExpansionBattery(
+                row[0].toInt() and 0xFF, serial, if (percent <= 100f) percent else null,
+                u32(row, 11), capacity, temp, fw,
+            )
+        }
 
     private fun parseAccessories(value: ByteArray): List<Accessory> =
         Report.parseTlvs(value).mapNotNull { tlv ->
