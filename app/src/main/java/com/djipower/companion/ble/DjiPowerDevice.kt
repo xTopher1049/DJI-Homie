@@ -255,7 +255,7 @@ class DjiPowerDevice(
             Duml.GET_COMMAND,
             byteArrayOf(
                 0x00, 0x00, 0x10, 0x01, 0x10, 0x02, 0x10, 0x04, 0x10, 0x05, 0x10,
-                0x06, 0x10, 0x0C, 0x10, 0x0D, 0x10,
+                0x06, 0x10, 0x0C, 0x10, 0x0D, 0x10, 0x18, 0x10,
             ),
         )
         applyConfig(decode(resp))
@@ -268,6 +268,7 @@ class DjiPowerDevice(
         keyed[Energy.ENERGY_STORAGE_KEY]?.let { rawConfig[Energy.ENERGY_STORAGE_KEY] = it }
         keyed[Energy.POWER_SWITCH_KEY]?.let { rawConfig[Energy.POWER_SWITCH_KEY] = it }
         keyed[Energy.DISPLAY_KEY]?.let { rawConfig[Energy.DISPLAY_KEY] = it }
+        keyed[Energy.ECO_KEY]?.let { rawConfig[Energy.ECO_KEY] = it }
 
         rawConfig[Energy.POWER_SWITCH_KEY]?.let {
             switchList = Energy.parsePortSwitches(it)
@@ -276,7 +277,9 @@ class DjiPowerDevice(
         rawConfig[Energy.CHARGE_LIMIT_KEY]?.let { Energy.parseChargeLimits(it) }?.let { limits ->
             val reserve = rawConfig[Energy.ENERGY_STORAGE_KEY]?.let { Energy.parseReserve(it) }
             val acTimeout = rawConfig[Energy.DISPLAY_KEY]?.let { Energy.parseAcTimeout(it) }
-            onConfig(EnergyConfig(limits, reserve, acTimeout))
+            val (esAvail, esMode) =
+                rawConfig[Energy.ECO_KEY]?.let { Energy.parseEnergySaver(it) } ?: (false to null)
+            onConfig(EnergyConfig(limits, reserve, acTimeout, esAvail, esMode))
         }
         if (keyed.keys.any { it == 0x00 || it == 0x01 || it == 0x02 || it == 0x04 || it == 0x0C }) {
             onDeviceInfo(DeviceInfoParser.parse(payload))

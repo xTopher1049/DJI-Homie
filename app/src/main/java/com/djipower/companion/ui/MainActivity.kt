@@ -380,6 +380,20 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+
+        if (cfg.energySaverAvailable) {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Energy Saver", style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold)
+                    Text("Mode: ${cfg.energySaverMode ?: "—"}")
+                    Text("Grid-tie / time-of-use energy management (read-only). Controls are not " +
+                        "implemented yet; this station reports Energy Saver support.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
     }
 
     @Composable

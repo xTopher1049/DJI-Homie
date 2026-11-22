@@ -6,7 +6,10 @@ data class ChargeLimits(
     val recharge: Int, val rechargeMin: Int, val rechargeMax: Int,
 )
 data class Reserve(val available: Boolean, val enabled: Boolean, val percent: Int)
-data class EnergyConfig(val limits: ChargeLimits, val reserve: Reserve?, val acTimeoutSec: Int? = null)
+data class EnergyConfig(
+    val limits: ChargeLimits, val reserve: Reserve?, val acTimeoutSec: Int? = null,
+    val energySaverAvailable: Boolean = false, val energySaverMode: String? = null,
+)
 
 /** One switchable station output (from the 0x0D power-switch snapshot). */
 data class PortSwitch(val type: Int, val seq: Int, val on: Boolean, val label: String)
@@ -16,6 +19,7 @@ object Energy {
     const val ENERGY_STORAGE_KEY = 0x06
     const val POWER_SWITCH_KEY = 0x0D
     const val DISPLAY_KEY = 0x0C
+    const val ECO_KEY = 0x18
     const val RESERVE_MARGIN = 5
 
     private fun u16(b: ByteArray, i: Int) =
@@ -72,6 +76,23 @@ object Energy {
 
     /** 0x0C holds device/screen/AC-output timeouts (u32 s); AC output is at [8:12]. 0 = never. */
     fun parseAcTimeout(v: ByteArray): Int? = if (v.size >= 12) u32(v, 8) else null
+
+    private val ENERGY_SAVER_MODES = arrayOf("Disabled", "Scheduled", "Self-consumption", "Time-of-use")
+    private val GRID_TIED_MODES = arrayOf("Self-consumption", "Time-of-use")
+
+    /** Eco/Energy-Saver 0x18: (available, mode). Needs a full (>=86-byte) record. */
+    fun parseEnergySaver(v: ByteArray): Pair<Boolean, String?> {
+        if (v.size < 86) return false to null
+        val available = (v[0].toInt() and 0xFF) == 1
+        val b1 = v[1].toInt() and 0xFF
+        val b16 = v[16].toInt() and 0xFF
+        val mode = when {
+            b1 == 1 || b1 == 2 -> ENERGY_SAVER_MODES[b1 - 1]
+            b1 == 3 && (b16 == 2 || b16 == 3) -> GRID_TIED_MODES[b16 - 2]
+            else -> null
+        }
+        return available to mode
+    }
 
     fun switchLabel(type: Int, seq: Int): String {
         val base = when (type) {
