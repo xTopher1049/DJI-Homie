@@ -10,7 +10,7 @@ The station's 0x04 list reports only *externally attached* accessories (the row 
 | code | accessory (DJI app wording)                     | source            |
 |------|--------------------------------------------------|-------------------|
 | 2    | DJI Power Solar Panel Adapter Module (MPPT)      | empirical + string |
-| ?    | DJI Power Car Power Outlet to SDC Power Cable (12V/24V) | string, code TBD |
+| 1*   | DJI Power Car Power Outlet to SDC Power Cable (12V/24V) | string; *code=1 is a best guess, unverified |
 
 Only two external-accessory display strings ship in the app (English):
 - "DJI Power Solar Panel Adapter Module (MPPT)"

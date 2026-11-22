@@ -5,7 +5,8 @@ data class Accessory(val type: Int, val firmware: String?) {
      *  2 confirmed = solar MPPT adapter; extend as other codes are identified. */
     val name: String
         get() = when (type) {
-            2 -> "Solar Panel Adapter Module (MPPT)"
+            1 -> "Car Power Outlet to SDC Power Cable (12V/24V)" // best guess, code unverified
+            2 -> "Solar Panel Adapter Module (MPPT)"             // confirmed
             else -> "Accessory (type $type)"
         }
 }
