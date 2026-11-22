@@ -9,6 +9,7 @@ data class Reserve(val available: Boolean, val enabled: Boolean, val percent: In
 data class EnergyConfig(
     val limits: ChargeLimits, val reserve: Reserve?, val acTimeoutSec: Int? = null,
     val energySaverAvailable: Boolean = false, val energySaverMode: String? = null,
+    val energySaverModes: List<String> = emptyList(),
 )
 
 /** One switchable station output (from the 0x0D power-switch snapshot). */
@@ -92,6 +93,40 @@ object Energy {
             else -> null
         }
         return available to mode
+    }
+
+    /** Modes the station offers now (Disabled/Scheduled always; grid-tied needs setup). */
+    fun energySaverOptions(v: ByteArray): List<String> {
+        if (v.size < 86 || (v[0].toInt() and 0xFF) != 1) return emptyList()
+        val offered = linkedSetOf(ENERGY_SAVER_MODES[0], ENERGY_SAVER_MODES[1])
+        parseEnergySaver(v).second?.let { offered.add(it) }
+        val gridMode = v[16].toInt() and 0xFF
+        if (gridMode == 2 || gridMode == 3) {
+            offered.add("Time-of-use")
+            if (ecoMeterLinked(v)) offered.add("Self-consumption")
+        }
+        return ENERGY_SAVER_MODES.filter { it in offered }
+    }
+
+    private fun ecoMeterLinked(v: ByteArray): Boolean {
+        if (v.size < 79) return false
+        return v.copyOfRange(42, 79).any { it.toInt() != 0 }
+    }
+
+    /** Return a copy of the eco (0x18) record with a new energy-saver mode applied. */
+    fun withEnergySaverMode(v: ByteArray, mode: String): ByteArray {
+        require(v.size >= 86) { "unexpected eco record size" }
+        val out = v.copyOf()
+        if (mode in GRID_TIED_MODES) {
+            require((out[16].toInt() and 0xFF) in intArrayOf(2, 3)) {
+                "set up this grid-tied mode in DJI Home first"
+            }
+            out[1] = 3
+            out[16] = (GRID_TIED_MODES.indexOf(mode) + 2).toByte()
+        } else {
+            out[1] = (ENERGY_SAVER_MODES.indexOf(mode) + 1).toByte()
+        }
+        return out
     }
 
     fun switchLabel(type: Int, seq: Int): String {

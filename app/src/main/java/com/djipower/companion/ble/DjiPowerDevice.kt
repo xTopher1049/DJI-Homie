@@ -313,7 +313,8 @@ class DjiPowerDevice(
             val acTimeout = rawConfig[Energy.DISPLAY_KEY]?.let { Energy.parseAcTimeout(it) }
             val (esAvail, esMode) =
                 rawConfig[Energy.ECO_KEY]?.let { Energy.parseEnergySaver(it) } ?: (false to null)
-            onConfig(EnergyConfig(limits, reserve, acTimeout, esAvail, esMode))
+            val esModes = rawConfig[Energy.ECO_KEY]?.let { Energy.energySaverOptions(it) } ?: emptyList()
+            onConfig(EnergyConfig(limits, reserve, acTimeout, esAvail, esMode, esModes))
         }
         if (keyed.keys.any { it == 0x00 || it == 0x01 || it == 0x02 || it == 0x04 || it == 0x0C }) {
             onDeviceInfo(DeviceInfoParser.parse(payload))
@@ -321,6 +322,15 @@ class DjiPowerDevice(
     }
 
     /** Toggle one station output on/off, preserving its row body; then re-read. */
+    /** Select an Energy Saver (Energy Optimization) mode on the station. */
+    suspend fun setEnergySaverMode(mode: String) {
+        val cur = rawConfig[Energy.ECO_KEY]
+            ?: throw IllegalStateException("energy saver not loaded yet")
+        val v = Energy.withEnergySaverMode(cur, mode)
+        request(Duml.SET_COMMAND, buildKeyedSet(listOf(Energy.ECO_KEY to v, setRules)))
+        readConfig()
+    }
+
     suspend fun setPortSwitch(type: Int, seq: Int, on: Boolean) {
         val snapshot = rawConfig[Energy.POWER_SWITCH_KEY]
             ?: throw IllegalStateException("switch state not loaded yet")

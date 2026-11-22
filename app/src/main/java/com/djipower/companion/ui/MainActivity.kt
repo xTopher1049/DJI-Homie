@@ -371,6 +371,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    @OptIn(ExperimentalLayoutApi::class)
     @Composable
     private fun EnergyPanel(energy: EnergyConfig?, scope: CoroutineScope, onError: (String) -> Unit) {
         val cfg = energy ?: run {
@@ -451,9 +452,26 @@ class MainActivity : ComponentActivity() {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("Energy Saver", style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold)
-                    Text("Mode: ${cfg.energySaverMode ?: "—"}")
-                    Text("Grid-tie / time-of-use energy management (read-only). Controls are not " +
-                        "implemented yet; this station reports Energy Saver support.",
+                    if (cfg.energySaverModes.isEmpty()) {
+                        Text("Mode: ${cfg.energySaverMode ?: "—"}")
+                    } else {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            cfg.energySaverModes.forEach { m ->
+                                FilterChip(
+                                    cfg.energySaverMode == m,
+                                    {
+                                        scope.launch {
+                                            runCatching { Conn.device?.setEnergySaverMode(m) }
+                                                .onFailure { onError("Energy Saver: ${it.message}") }
+                                        }
+                                    },
+                                    { Text(m) },
+                                )
+                            }
+                        }
+                    }
+                    Text("Grid-tied modes (Self-consumption / Time-of-use) must be set up in " +
+                        "DJI Home first.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
