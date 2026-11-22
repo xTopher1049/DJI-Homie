@@ -16,6 +16,8 @@ class AppSettings(context: Context) {
     private fun i(k: String, d: Int) = prefs.getInt(k, d)
     private fun f(k: String, d: Float) = prefs.getFloat(k, d)
     private fun setF(k: String, v: Float) = prefs.edit().putFloat(k, v).apply()
+    private fun str(k: String, d: String) = prefs.getString(k, d) ?: d
+    private fun setStr(k: String, v: String) = prefs.edit().putString(k, v).apply()
     private fun setI(k: String, v: Int) = prefs.edit().putInt(k, v).apply()
 
     // --- Zero-load AC cutoff (inverter parasitic-drain protection) ---
@@ -58,10 +60,24 @@ class AppSettings(context: Context) {
     var solarThresholdW: Int
         get() = i("solar_w", 200); set(v) = setI("solar_w", v)
 
+    // --- MQTT bridge (publish telemetry + accept AC commands over a local broker) ---
+    var mqttEnabled: Boolean
+        get() = b("mqtt_on", false); set(v) = setB("mqtt_on", v)
+    var mqttHost: String
+        get() = str("mqtt_host", ""); set(v) = setStr("mqtt_host", v)
+    var mqttPort: Int
+        get() = i("mqtt_port", 1883); set(v) = setI("mqtt_port", v)
+    var mqttUser: String
+        get() = str("mqtt_user", ""); set(v) = setStr("mqtt_user", v)
+    var mqttPass: String
+        get() = str("mqtt_pass", ""); set(v) = setStr("mqtt_pass", v)
+    var mqttBaseTopic: String
+        get() = str("mqtt_topic", "dji_power"); set(v) = setStr("mqtt_topic", v)
+
     /** True when any automation that needs the always-on service is enabled. */
     val serviceEnabled: Boolean
         get() = zeroLoadEnabled || socCutoffEnabled || dutyCycleEnabled ||
-            solarPriorityEnabled || stormPrepEnabled
+            solarPriorityEnabled || stormPrepEnabled || mqttEnabled
 
     // --- Home-screen widget snapshot (last-known telemetry) ---
     val wBattery: Int get() = i("w_batt", -1)

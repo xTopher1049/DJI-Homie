@@ -24,6 +24,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.combine
+import org.json.JSONObject
 import kotlinx.coroutines.launch
 
 /**
@@ -36,6 +37,7 @@ import kotlinx.coroutines.launch
  */
 class DjiPowerService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var bridge: MqttBridge? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -62,7 +64,23 @@ class DjiPowerService : Service() {
                 delay(20_000)
             }
         }
+        bridge = MqttBridge(this)
+        scope.launch(Dispatchers.IO) { runCatching { bridge?.start() } }
+        scope.launch {
+            Conn.state.collect { st -> st?.let { bridge?.publishState(stateJson(it)) } }
+        }
     }
+
+    private fun stateJson(s: com.djipower.companion.protocol.PowerState): String =
+        JSONObject().apply {
+            put("battery", s.batteryPercent ?: JSONObject.NULL)
+            put("out_w", s.outputW ?: 0)
+            put("in_w", s.inputW ?: 0)
+            put("ac_w", s.acOutputW)
+            put("dc_w", s.dcOutputW)
+            put("runtime_min", s.runtimeMin ?: JSONObject.NULL)
+            put("charging", s.charging ?: JSONObject.NULL)
+        }.toString()
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Conn.start(this)
@@ -70,6 +88,7 @@ class DjiPowerService : Service() {
     }
 
     override fun onDestroy() {
+        runCatching { bridge?.stop() }
         scope.cancel()
         super.onDestroy()
     }

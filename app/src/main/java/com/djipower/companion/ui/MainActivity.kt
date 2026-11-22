@@ -869,6 +869,22 @@ private fun AutomationsScreen(
             ) {
                 NumField("Input above", s.solarThresholdW, "W") { s.solarThresholdW = it; changed() }
             }
+            AutomationCard(
+                "MQTT bridge",
+                "Publishes telemetry to a local MQTT broker (Mosquitto / Home Assistant) and accepts " +
+                "AC on/off commands, so a spare phone can bridge BLE to Wi-Fi.",
+                s.mqttEnabled, { s.mqttEnabled = it; changed() },
+            ) {
+                StrField("Broker host / IP", s.mqttHost) { s.mqttHost = it }
+                NumField("Port", s.mqttPort, "") { s.mqttPort = it }
+                StrField("Base topic", s.mqttBaseTopic) { s.mqttBaseTopic = it }
+                StrField("Username (optional)", s.mqttUser) { s.mqttUser = it }
+                StrField("Password (optional)", s.mqttPass) { s.mqttPass = it }
+                Text("Publishes ${s.mqttBaseTopic.ifBlank { "dji_power" }}/state · listens " +
+                    "…/ac/set (on/off). Toggle off and on to apply changes.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }
@@ -909,6 +925,18 @@ private fun NumField(label: String, value: Int, suffix: String, onChange: (Int) 
         suffix = { Text(suffix) },
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+@Composable
+private fun StrField(label: String, value: String, onChange: (String) -> Unit) {
+    var text by remember(value) { mutableStateOf(value) }
+    OutlinedTextField(
+        value = text,
+        onValueChange = { text = it; onChange(it) },
+        label = { Text(label) },
+        singleLine = true,
         modifier = Modifier.fillMaxWidth(),
     )
 }
