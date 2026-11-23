@@ -12,6 +12,7 @@
   <a href="https://github.com/xTopher1049/DJI-Homie/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/xTopher1049/DJI-Homie"></a>
   <a href="https://github.com/xTopher1049/DJI-Homie/actions/workflows/build.yml"><img alt="Build" src="https://github.com/xTopher1049/DJI-Homie/actions/workflows/build.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
+  <a href="https://buymeacoffee.com/xtopher"><img alt="Buy me a coffee" src="https://img.shields.io/badge/Buy%20me%20a%20coffee-FFDD00?logo=buymeacoffee&logoColor=black"></a>
 </p>
 
 ## Features
@@ -149,6 +150,11 @@ with its tag.
 
 Developer notes live in [`docs/HANDOFF.md`](docs/HANDOFF.md), and protocol findings from
 the DJI Home app are in [`docs/apk-analysis.md`](docs/apk-analysis.md).
+
+## Support
+
+DJI Homie is free and open source. If it's useful to you, you can
+[buy me a coffee](https://buymeacoffee.com/xtopher) ☕
 
 ## License
 

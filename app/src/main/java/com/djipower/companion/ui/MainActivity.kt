@@ -22,6 +22,9 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.material.icons.filled.LocalCafe
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.foundation.clickable
@@ -518,6 +521,8 @@ class MainActivity : ComponentActivity() {
                     fontWeight = FontWeight.Bold)
             }
 
+            SupportCard()
+
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("Appearance", style = MaterialTheme.typography.titleMedium,
@@ -1002,6 +1007,35 @@ private fun fmtAge(s: Long): String = when {
     s < 3600 -> "${s / 60}m"
     else -> "${s / 3600}h"
 }
+
+/** Optional tip link at the top of settings; opens the page in the browser. */
+@Composable
+private fun SupportCard() {
+    val uriHandler = LocalUriHandler.current
+    Card(
+        modifier = Modifier.fillMaxWidth()
+            .clickable { runCatching { uriHandler.openUri(SUPPORT_URL) } },
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+    ) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Icon(Icons.Filled.LocalCafe, contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSecondaryContainer)
+            Column(Modifier.weight(1f)) {
+                Text("Enjoying DJI Homie?", style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer)
+                Text("It's free and open source. If it's useful to you, you can buy me a coffee.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer)
+            }
+            Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = "Opens in browser",
+                tint = MaterialTheme.colorScheme.onSecondaryContainer)
+        }
+    }
+}
+
+private const val SUPPORT_URL = "https://buymeacoffee.com/xtopher"
 
 /** Shows the shared token Tasker / MacroDroid must send with the SET_AC broadcast. */
 @Composable
